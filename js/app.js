@@ -389,11 +389,12 @@
   function logout() {
     var hasExam = !!LS.get(k('exam'), null);
     openModal({
-      title: 'Log out?',
-      body: hasExam ? 'You have an exam in progress. Its timer keeps running while you are logged out.' : 'You can log in again any time with your matric number.',
+      title: 'Do you want to log out?',
+      body: (hasExam ? '<p>You have an exam in progress. Its timer keeps running while you are logged out.</p>' : '') +
+        '<p' + (hasExam ? ' class="mt-2"' : '') + '>Your scores are saved. You can log in again any time with your matric number.</p>',
       actions: [
-        { label: 'Cancel' },
-        { label: 'Log out', danger: true, onClick: function () {
+        { label: 'Stay logged in', primary: true },
+        { label: 'Yes, log out', danger: true, onClick: function () {
           closeModal();
           stopTimer();
           stopLeaderboard();
@@ -768,7 +769,8 @@
       '<div class="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-[11px] font-semibold text-slate-500">' +
       '<span class="flex items-center gap-1.5"><span class="legend pal-done"></span>Answered</span>' +
       '<span class="flex items-center gap-1.5"><span class="legend"></span>Not answered</span>' +
-      '<span class="flex items-center gap-1.5"><span class="legend pal-cur"></span>Current</span></div>';
+      '<span class="flex items-center gap-1.5"><span class="legend pal-cur"></span>Current</span></div>' +
+      '<div class="mt-5 pt-4 border-t border-blue-50 text-center"><button type="button" class="link text-red-600 text-sm" data-action="quit-exam">Quit this exam (it will not count)</button></div>';
   }
 
   function go(c, i) {
@@ -831,6 +833,45 @@
       ex.warned.d = 1; saveExam();
       toast('Only ' + (CFG.dangerAtMinutes || 5) + ' minutes left! Your answers will be submitted automatically when time runs out.', 'danger', 7000);
     }
+  }
+
+  /* Quit (forfeit) an exam: nothing is recorded, and its questions go back
+   * into the student's pool so they can still get them in a later exam. */
+  function confirmQuit() {
+    openModal({
+      title: 'Quit this exam?',
+      body: '<p>Your answers will be thrown away. This exam will <b>not</b> count on the leaderboard and will not be added to your attempts.</p>' +
+        '<p class="mt-2">The questions go back into your question bank, so you can still get them in a later exam.</p>',
+      actions: [
+        { label: 'Keep going', primary: true },
+        { label: 'Yes, quit exam', danger: true, onClick: function (b) { quitExam(b); } }
+      ]
+    });
+  }
+
+  function quitExam(btn) {
+    var ex = state.exam || LS.get(k('exam'), null);
+    if (!ex) { closeModal(); return showDashboard(); }
+    setBusy(btn, true, 'Quitting...');
+    stopTimer();
+    var used = {};
+    ex.sections.forEach(function (s) { s.items.forEach(function (it) { used[it.id] = true; }); });
+    var sid = state.student.sid;
+    Store.getSeen(sid).then(function (seen) {
+      seen = seen || {};
+      Object.keys(seen).forEach(function (code) {
+        var s = seen[code];
+        if (s && s.ids) s.ids = s.ids.filter(function (id) { return !used[id]; });
+      });
+      state.seen = seen;
+      return Store.saveSeen(sid, seen);
+    }).catch(function (e) { console.warn('Could not give questions back', e); }).then(function () {
+      LS.del(k('exam'));
+      state.exam = null;
+      closeModal();
+      showDashboard();
+      toast('Exam quit. It was not counted.', 'info');
+    });
   }
 
   function confirmSubmit() {
@@ -964,6 +1005,7 @@
       '</div></section>' +
       '<section class="rounded-3xl hero-card text-white p-5 sm:p-6 shadow-lg"><p class="text-xs font-bold uppercase tracking-wider text-blue-100">Message for you</p>' +
       '<p class="mt-2 text-lg font-bold leading-snug">' + esc(res.message) + '</p></section>' +
+      revisionHtml(res) +
       '<section class="card p-5"><h2 class="section-title">Score per course</h2><div class="mt-4 space-y-5">' +
       res.sections.map(function (s) {
         var pc = res.perCourse[s.code] || { score: 0, total: s.items.length, wrong: 0, skipped: 0 };
@@ -982,6 +1024,44 @@
       var fg = document.querySelector('.ring-fg');
       if (fg) setTimeout(function () { fg.style.strokeDashoffset = fg.getAttribute('data-off'); }, 60);
     });
+  }
+
+  /* Topics the student missed questions in, weakest first. */
+  function topicStats(res) {
+    var out = [];
+    res.sections.forEach(function (s, ci) {
+      var by = {};
+      s.items.forEach(function (it, i) {
+        var q = QMAP[it.id];
+        if (!q) return;
+        var t = by[q.topic] = by[q.topic] || { course: s.code, ci: ci, topic: q.topic, total: 0, missed: 0 };
+        t.total++;
+        if (itemStatus(res, s.code, i, it) !== 'correct') t.missed++;
+      });
+      Object.keys(by).forEach(function (k2) { out.push(by[k2]); });
+    });
+    return out;
+  }
+
+  function revisionHtml(res) {
+    var list = topicStats(res).filter(function (t) { return t.missed > 0; })
+      .sort(function (a, b) { return (b.missed / b.total) - (a.missed / a.total) || b.missed - a.missed; });
+    if (!list.length) {
+      return '<section class="card p-5"><h2 class="section-title">Topics to revise</h2><p class="mt-2 text-sm text-slate-600">You got every question right. Excellent!</p></section>';
+    }
+    return '<section class="card p-5"><h2 class="section-title">Topics to revise</h2>' +
+      '<p class="text-xs text-slate-500 mt-1">Topics where you missed questions, weakest first. Tap a topic to see those questions with the correct answers and explanations.</p>' +
+      '<div class="mt-4 space-y-2">' +
+      list.map(function (t) {
+        var got = t.total - t.missed;
+        var w = Math.round(got / t.total * 100);
+        return '<button type="button" class="topic-row" data-action="revise-topic" data-c="' + t.ci + '" data-topic="' + esc(t.topic) + '">' +
+          '<span class="course-badge course-badge-sm">' + esc(t.course) + '</span>' +
+          '<span class="flex-1 min-w-0 text-left"><span class="block font-bold text-slate-800 text-sm truncate">' + esc(t.topic) + '</span>' +
+          '<span class="block text-[11px] text-slate-500">Missed ' + t.missed + ' of ' + t.total + '</span>' +
+          '<span class="bar mt-1.5 block"><span class="bar-fill block" style="width:' + w + '%"></span></span></span>' +
+          '<span class="text-blue-700 shrink-0">' + ICON.right + '</span></button>';
+      }).join('') + '</div></section>';
   }
 
   /* =====================================================================
@@ -1013,11 +1093,13 @@
     var filterBtn = function (id, label) {
       return '<button type="button" class="fchip ' + (f === id ? 'fchip-on' : '') + '" data-action="corr-filter" data-f="' + id + '">' + label + ' <span class="opacity-70">' + counts[id] + '</span></button>';
     };
+    var topicF = state.corr.topic || '';
     var items = sec.items.map(function (it, i) {
       var status = itemStatus(res, sec.code, i, it);
       if (f !== 'all' && f !== status) return '';
       var q = QMAP[it.id];
       if (!q) return '';
+      if (topicF && q.topic !== topicF) return '';
       var chosen = (res.answers[sec.code] || {})[i];
       var opts = it.perm.map(function (orig, d) {
         var isRight = orig === q.answer, isMine = chosen === d;
@@ -1048,6 +1130,8 @@
       }).join('') + '</nav>' +
       '<div class="max-w-3xl mx-auto px-4 pb-3 flex gap-2 overflow-x-auto no-scrollbar">' +
       filterBtn('all', 'All') + filterBtn('wrong', 'Wrong') + filterBtn('skipped', 'Skipped') + filterBtn('correct', 'Correct') + '</div>' +
+      (topicF ? '<div class="max-w-3xl mx-auto px-4 pb-3"><span class="topic-chip">Topic: ' + esc(topicF) +
+        ' <button type="button" class="topic-chip-x" data-action="clear-topic" aria-label="Show all topics">' + ICON.cross + '</button></span></div>' : '') +
       '</header>' +
       '<main class="max-w-3xl mx-auto px-4 py-5 space-y-4">' +
       (items || '<div class="card p-8 text-center text-slate-500">No questions in this list.</div>') +
@@ -1077,9 +1161,14 @@
       openModal({
         title: 'Leave the exam page?',
         body: 'Your answers are saved, but the timer keeps running. You can come back with the <b>Resume exam</b> button on the dashboard.',
-        actions: [{ label: 'Stay here', primary: true }, { label: 'Go to dashboard', onClick: function () { closeModal(); saveExam(); state.exam = null; showDashboard(); } }]
+        actions: [
+          { label: 'Stay here', primary: true },
+          { label: 'Go to dashboard', onClick: function () { closeModal(); saveExam(); state.exam = null; showDashboard(); } },
+          { label: 'Quit exam', danger: true, onClick: function () { confirmQuit(); } }
+        ]
       });
     },
+    'quit-exam': function () { confirmQuit(); },
     'goto-course': function (el) { go(+el.getAttribute('data-c'), state.exam.cur.c === +el.getAttribute('data-c') ? state.exam.cur.i : 0); },
     'goto-q': function (el) { go(state.exam.cur.c, +el.getAttribute('data-i')); },
     'answer': function (el) { answer(+el.getAttribute('data-d')); },
@@ -1089,8 +1178,10 @@
     'submit-exam': confirmSubmit,
     'dashboard': function () { showDashboard(); },
     'result': function () { showResult(); },
-    'corrections': function () { state.corr = { course: 0, filter: 'all' }; showCorrections(); },
-    'corr-course': function (el) { state.corr.course = +el.getAttribute('data-c'); renderCorrections(); window.scrollTo(0, 0); },
+    'corrections': function () { state.corr = { course: 0, filter: 'all', topic: '' }; showCorrections(); },
+    'revise-topic': function (el) { state.corr = { course: +el.getAttribute('data-c'), filter: 'all', topic: el.getAttribute('data-topic') }; showCorrections(); },
+    'clear-topic': function () { state.corr.topic = ''; renderCorrections(); },
+    'corr-course': function (el) { state.corr.course = +el.getAttribute('data-c'); state.corr.topic = ''; renderCorrections(); window.scrollTo(0, 0); },
     'corr-filter': function (el) { state.corr.filter = el.getAttribute('data-f'); renderCorrections(); }
   };
 

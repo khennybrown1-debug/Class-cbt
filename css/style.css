@@ -98,7 +98,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* ---------- toasts & modal ---------- */
-#toast-root { position: fixed; z-index: 60; bottom: calc(16px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: min(92vw, 420px); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+#toast-root { position: fixed; z-index: 45; bottom: calc(16px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: min(92vw, 420px); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 .toast { animation: toastIn .25s ease both; }
 .toast-out { animation: toastOut .3s ease both; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
@@ -214,3 +214,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
 }
+
+/* ---------- revision topics ---------- */
+.topic-row { width: 100%; display: flex; align-items: center; gap: .75rem; padding: .7rem .8rem; border-radius: 1rem; background: #fff; border: 1px solid #e3ebff; cursor: pointer; transition: background-color .15s ease, border-color .15s ease; }
+.topic-row:hover { background: var(--blue-light); border-color: #bfd3fe; }
+.course-badge-sm { width: 42px; height: 42px; font-size: .72rem; border-radius: .85rem; }
+.topic-chip { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .5rem .35rem .8rem; border-radius: 999px; background: var(--blue-light); color: var(--blue-dark); font-size: .8rem; font-weight: 700; max-width: 100%; }
+.topic-chip-x { width: 24px; height: 24px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: #fff; color: var(--blue-dark); border: 0; cursor: pointer; flex-shrink: 0; }

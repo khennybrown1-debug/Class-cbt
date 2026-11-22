@@ -266,6 +266,24 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     await noHorizontalScroll(page);
     await shot(page, '06-corrections');
   });
+  await t('result lists "Topics to revise"; tapping one shows only that topic in corrections', async () => {
+    await page.click('header [data-action=result]');
+    await page.waitForSelector('.topic-row');
+    const rows = await page.$$eval('.topic-row', (els) => els.map((e) => e.getAttribute('data-topic')));
+    assert(rows.length > 10, 'only ' + rows.length + ' topics to revise');
+    const topic = rows[0];
+    await page.click('.topic-row');
+    await page.waitForSelector('.topic-chip');
+    const chips = await page.$$eval('article .chip', (els) => els.map((e) => e.textContent));
+    assert(chips.length > 0 && chips.every((c) => c === topic), topic + ' vs ' + JSON.stringify(chips));
+    await shot(page, '06b-revise-topic');
+    await page.click('[data-action=clear-topic]');
+    assert(!(await page.$('.topic-chip')));
+    await page.click('header [data-action=result]');
+    await page.waitForSelector('.topic-row');
+    await page.$eval('.topic-row', (e) => e.scrollIntoView({ block: 'center' }));
+    await shot(page, '05b-topics-to-revise');
+  });
   await t('back on dashboard: leaderboard has Amina #1 with 16.7%, seen counts updated', async () => {
     await page.click('header [data-action=dashboard]');
     await page.waitForSelector('#lb .podium');
@@ -313,6 +331,41 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     assert(!(await page.textContent('body')).includes('\u2014'), 'em dash on the page');
   });
   await ctxA.close();
+
+  // =================================================================
+  console.log('\nG. Quit exam and log out confirmation');
+  // =================================================================
+  {
+    const { ctx, page: p } = await newPhone(browser, { label: 'quit' });
+    await p.goto(URL_DEV);
+    await p.waitForSelector('#auth-submit');
+    await signup(p, 'Awwal Mubarak', 'PHT/26/1006');
+    await p.waitForSelector('[data-action=start-exam]');
+    await startExam(p);
+    await answerN(p, 3);
+    await t('quit exam asks first, then nothing is counted and questions go back', async () => {
+      await p.click('#palette [data-action=quit-exam]');
+      await p.waitForSelector('.modal-panel');
+      assert((await p.textContent('.modal-panel')).includes('not</b> count') || (await p.textContent('.modal-panel')).includes('not count'));
+      await shot(p, '17-quit-confirm');
+      await p.click('.modal-panel .btn-danger');
+      await p.waitForSelector('[data-action=start-exam]');
+      const txt = await p.textContent('body');
+      assert(!txt.includes('Resume exam'), 'exam still there');
+      assert((await p.textContent('#stats')).includes('0'), 'attempts');
+      await p.waitForFunction(() => document.getElementById('seen').textContent.includes('0 of 332'));
+      assert((await p.textContent('#lb')).includes('No scores yet'), 'quit exam should not be on the leaderboard');
+    });
+    await t('log out asks "Stay logged in" or "Yes, log out"', async () => {
+      await p.click('[data-action=logout]');
+      const body = await p.textContent('.modal-panel');
+      assert(body.includes('Stay logged in') && body.includes('Yes, log out'), body);
+      await shot(p, '18-logout-confirm');
+      await p.click('.modal-panel .btn-primary');
+      assert(!(await p.$('.modal-panel')) && await p.$('[data-action=start-exam]'), 'should stay on dashboard');
+    });
+    await ctx.close();
+  }
 
   // =================================================================
   console.log('\nB. Timer colours and auto submit (exam shortened to 15 seconds)');
