@@ -1,0 +1,142 @@
+rules_version = '2';
+
+// =====================================================================
+//  CBT Practice: Firestore security rules
+//  Paste this whole file into Firebase console > Firestore Database > Rules
+//  and tap Publish.
+//
+//  What these rules guarantee:
+//   - Everyone can read the leaderboard (students collection).
+//   - A new student can only create their own record, with zero scores.
+//   - Name and matric number can never be changed after sign up.
+//   - Attempts go up by exactly 1 per submitted exam, and every submission
+//     must come with a matching attempt record.
+//   - Best score can never go down and can never be above 100%.
+//   - Nobody can delete anything.
+//   - The "seen questions" record can be written by the student's app.
+// =====================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function studentPath(sid) {
+      return /databases/$(database)/documents/students/$(sid);
+    }
+    function isPct(x) {
+      return x is number && x >= 0 && x <= 100;
+    }
+    function isCount(x) {
+      return x is int && x >= 0 && x <= 1000;
+    }
+
+    // ---------------- Students (this is the leaderboard) ----------------
+    match /students/{sid} {
+      allow get, list: if true;
+
+      // Sign up: only a fresh record with every score at zero.
+      allow create: if request.resource.data.keys().hasOnly(
+                         ['name', 'matric', 'hasPin', 'attempts', 'bestPct', 'bestScore', 'bestTotal',
+                          'bestAt', 'lastPct', 'lastExamId', 'createdAt', 'updatedAt'])
+                    && request.resource.data.keys().hasAll(
+                         ['name', 'matric', 'hasPin', 'attempts', 'bestPct', 'bestScore', 'bestTotal',
+                          'bestAt', 'lastPct', 'lastExamId', 'createdAt', 'updatedAt'])
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() >= 3
+                    && request.resource.data.name.size() <= 80
+                    && request.resource.data.matric is string
+                    && request.resource.data.matric.size() >= 3
+                    && request.resource.data.matric.size() <= 30
+                    && request.resource.data.hasPin is bool
+                    && request.resource.data.attempts == 0
+                    && request.resource.data.bestPct == 0
+                    && request.resource.data.bestScore == 0
+                    && request.resource.data.bestTotal == 0
+                    && request.resource.data.lastPct == 0
+                    && request.resource.data.lastExamId == ''
+                    && request.resource.data.bestAt == request.time
+                    && request.resource.data.createdAt == request.time
+                    && request.resource.data.updatedAt == request.time;
+
+      // Submitting an exam. name, matric, hasPin and createdAt can never change.
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+                         ['attempts', 'bestPct', 'bestScore', 'bestTotal', 'bestAt', 'lastPct', 'lastExamId', 'updatedAt'])
+                    && request.resource.data.attempts == resource.data.attempts + 1
+                    && isPct(request.resource.data.lastPct)
+                    && isPct(request.resource.data.bestPct)
+                    && isCount(request.resource.data.bestScore)
+                    && isCount(request.resource.data.bestTotal)
+                    && request.resource.data.bestScore <= request.resource.data.bestTotal
+                    && request.resource.data.lastExamId is string
+                    && request.resource.data.lastExamId.size() > 0
+                    && request.resource.data.lastExamId.size() <= 40
+                    && request.resource.data.lastExamId != resource.data.lastExamId
+                    && request.resource.data.updatedAt == request.time
+                    && (
+                         // Not a new best: best values stay exactly the same
+                         (request.resource.data.lastPct <= resource.data.bestPct
+                           && request.resource.data.bestPct == resource.data.bestPct
+                           && request.resource.data.bestScore == resource.data.bestScore
+                           && request.resource.data.bestTotal == resource.data.bestTotal
+                           && request.resource.data.bestAt == resource.data.bestAt)
+                         ||
+                         // New best: best becomes this attempt's score, stamped with server time
+                         (request.resource.data.lastPct > resource.data.bestPct
+                           && request.resource.data.bestPct == request.resource.data.lastPct
+                           && request.resource.data.bestAt == request.time)
+                       )
+                    // The matching attempt record must be written in the same batch.
+                    && existsAfter(/databases/$(database)/documents/attempts/$(sid + '_' + string(request.resource.data.attempts)));
+
+      allow delete: if false;
+
+      // Optional PIN. The document ID is a hash of matric + PIN, so the PIN
+      // can be checked by reading one exact ID, but the list cannot be read.
+      match /pin/{hash} {
+        allow get: if true;
+        allow list, update, delete: if false;
+        // Only together with sign up (the student record is being created in the same batch).
+        allow create: if !exists(studentPath(sid))
+                      && existsAfter(studentPath(sid))
+                      && request.resource.data.keys().hasOnly(['createdAt'])
+                      && request.resource.data.createdAt == request.time;
+      }
+    }
+
+    // ---------------- Attempt history ----------------
+    match /attempts/{attemptId} {
+      allow get, list: if true;
+      allow create: if request.resource.data.keys().hasOnly(
+                         ['sid', 'name', 'matric', 'score', 'total', 'pct', 'perCourse', 'timeUsedSec', 'examId', 'createdAt'])
+                    && request.resource.data.sid is string
+                    && attemptId == request.resource.data.sid + '_' + string(getAfter(studentPath(request.resource.data.sid)).data.attempts)
+                    && getAfter(studentPath(request.resource.data.sid)).data.lastExamId == request.resource.data.examId
+                    && getAfter(studentPath(request.resource.data.sid)).data.lastPct == request.resource.data.pct
+                    && isCount(request.resource.data.score)
+                    && isCount(request.resource.data.total)
+                    && request.resource.data.total > 0
+                    && request.resource.data.score <= request.resource.data.total
+                    && isPct(request.resource.data.pct)
+                    && request.resource.data.pct >= request.resource.data.score * 100.0 / request.resource.data.total - 0.1
+                    && request.resource.data.pct <= request.resource.data.score * 100.0 / request.resource.data.total + 0.1
+                    && request.resource.data.perCourse is map
+                    && request.resource.data.timeUsedSec is int
+                    && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // ---------------- Questions each student has already seen ----------------
+    match /seen/{sid} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if exists(studentPath(sid))
+                            && request.resource.data.keys().hasOnly(['courses', 'updatedAt'])
+                            && request.resource.data.courses is map
+                            && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // Everything else is closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

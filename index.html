@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>CBT Practice Arena</title>
+  <meta name="description" content="JAMB style CBT practice with a live class leaderboard.">
+  <meta name="theme-color" content="#1d4ed8">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d4ed8'/%3E%3Cpath d='M9 16l5 5 9-10' stroke='white' stroke-width='3.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- TAILWIND:START (the one-file build replaces this with ready-made CSS) -->
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script>
+    tailwind.config = { theme: { extend: { fontFamily: { sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'] } } } };
+  </script>
+  <!-- TAILWIND:END -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="antialiased">
+  <noscript><p style="padding:24px;font-family:sans-serif">Please turn on JavaScript to use this site.</p></noscript>
+  <div id="app"></div>
+  <div id="toast-root" aria-live="polite"></div>
+  <div id="modal-root"></div>
+
+  <!-- 1. Settings and Firebase keys -->
+  <script src="js/config.js"></script>
+  <!-- 2. Question banks (one file per course) -->
+  <script src="js/questions/gst.js"></script>
+  <script src="js/questions/phc.js"></script>
+  <script src="js/questions/chm.js"></script>
+  <script src="js/questions/aum.js"></script>
+  <!-- 3. App -->
+  <script src="js/engine.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
