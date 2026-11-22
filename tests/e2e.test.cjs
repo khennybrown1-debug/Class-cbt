@@ -211,6 +211,24 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     await page.keyboard.press('p');
     assert((await page.textContent('#q-card')).includes('Question 1 of 45'));
   });
+  await t('scientific calculator opens over the exam and works', async () => {
+    const tap = async (label) => page.click(`#calc-root .ck:text-is("${label}")`);
+    await page.click('header [data-action=calculator]');
+    await page.waitForSelector('#calc-root.calc-open');
+    for (const k of ['2', '×', '(', '3', '+', '4', ')', '=']) await tap(k);
+    assert((await page.textContent('#calc-res')).trim() === '= 14', await page.textContent('#calc-res'));
+    await tap('AC'); await tap('log'); await tap('1'); await tap('0'); await tap('0'); await tap('0'); await tap('=');
+    assert((await page.textContent('#calc-res')).trim() === '= 3', 'log');
+    await tap('AC'); await tap('6'); await tap('.'); await tap('0'); await tap('2'); await tap('EXP'); await tap('2'); await tap('3'); await tap('×'); await tap('2'); await tap('=');
+    assert((await page.textContent('#calc-res')).includes('1.204 × 10^24'), await page.textContent('#calc-res'));
+    await shot(page, '20-calculator');
+    const before = await page.$('#q-card .opt-on');
+    await page.keyboard.press('a');   // must NOT answer the question while the calculator is open
+    await page.keyboard.press('Escape');
+    assert(!(await page.$('#calc-root.calc-open')), 'Escape should close');
+    const after = await page.$$eval('#q-card .opt-on', (e) => e.map((x) => x.getAttribute('data-d')));
+    assert(!!before === (after.length > 0) && !after.includes('0') || after.length === 1, 'calculator key leaked into the exam');
+  });
   await t('palette jump goes straight to question 30', async () => {
     await page.click('#palette .pal[data-i="29"]');
     assert((await page.textContent('#q-card')).includes('Question 30 of 45'));

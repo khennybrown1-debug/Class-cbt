@@ -103,6 +103,7 @@
     trophy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/></svg>',
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="M15 18l-6-6 6-6"/></svg>',
     left: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M15 18l-6-6 6-6"/></svg>',
+    calc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><rect x="5" y="2.5" width="14" height="19" rx="2.5"/><path d="M8.5 6.5h7M8.5 11h.01M12 11h.01M15.5 11h.01M8.5 14.5h.01M12 14.5h.01M15.5 14.5h.01M8.5 18h.01M12 18h.01M15.5 18h.01"/></svg>',
     right: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M9 6l6 6-6 6"/></svg>'
   };
 
@@ -177,6 +178,7 @@
     return '<div class="avatar ' + (cls || '') + '">' + esc(initials(name)) + '</div>';
   }
   function setView(v) {
+    if (window.CBTCalc) window.CBTCalc.close();
     state.view = v;
     document.body.setAttribute('data-view', v);
     window.scrollTo(0, 0);
@@ -722,7 +724,8 @@
       '<button type="button" class="icon-btn" data-action="exam-home" aria-label="Go to dashboard">' + ICON.home + '</button>' +
       '<div class="min-w-0 leading-tight"><div class="text-sm font-extrabold text-blue-900 truncate">' + esc(st.name) + '</div>' +
       '<div class="text-[11px] text-slate-500 truncate">' + esc(st.matric) + '</div></div>' +
-      '<div id="timer" class="timer ml-auto" role="timer" aria-live="off">' + ICON.clock + '<span id="timer-text">' + clock(ex.endsAt - Date.now()) + '</span></div>' +
+      '<button type="button" class="icon-btn ml-auto" data-action="calculator" aria-label="Open calculator" title="Calculator">' + ICON.calc + '</button>' +
+      '<div id="timer" class="timer" role="timer" aria-live="off">' + ICON.clock + '<span id="timer-text">' + clock(ex.endsAt - Date.now()) + '</span></div>' +
       '<button type="button" class="btn btn-primary btn-sm" data-action="submit-exam">Submit</button>' +
       '</div>' +
       '<nav id="exam-tabs" class="tabs-fit max-w-6xl mx-auto px-3 sm:px-4 py-2 flex gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar" role="tablist"></nav>' +
@@ -1163,7 +1166,8 @@
       '<div class="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">' +
       '<button type="button" class="icon-btn" data-action="result" aria-label="Back to result">' + ICON.back + '</button>' +
       '<h1 class="font-extrabold text-blue-900">Corrections</h1>' +
-      '<button type="button" class="ml-auto btn btn-ghost btn-sm" data-action="dashboard">Dashboard</button></div>' +
+      '<button type="button" class="icon-btn ml-auto" data-action="calculator" aria-label="Open calculator" title="Calculator">' + ICON.calc + '</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="dashboard">Dashboard</button></div>' +
       '<nav class="tabs-fit max-w-3xl mx-auto px-4 pb-2 flex gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar">' +
       res.sections.map(function (s, i) {
         var pc = res.perCourse[s.code] || { score: 0, total: s.items.length };
@@ -1214,6 +1218,7 @@
     'goto-q': function (el) { go(state.exam.cur.c, +el.getAttribute('data-i')); },
     'answer': function (el) { answer(+el.getAttribute('data-d')); },
     'clear-answer': clearAnswer,
+    'calculator': function () { if (window.CBTCalc) window.CBTCalc.open(); },
     'next': next,
     'prev': prev,
     'submit-exam': confirmSubmit,
@@ -1245,6 +1250,7 @@
   // Exam keyboard shortcuts
   document.addEventListener('keydown', function (e) {
     if (state.view !== 'exam' || !state.exam || state.modalOpen) return;
+    if (window.CBTCalc && window.CBTCalc.isOpen()) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     var tag = (e.target && e.target.tagName) || '';
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
