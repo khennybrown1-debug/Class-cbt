@@ -615,6 +615,30 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
       assert(stats.includes('#2'), 'phone A rank should now be #2: ' + stats);
       await shot(A.page, '14-firebase-phoneA-live-update');
     });
+    await t('CHT/ prefix is optional: log in either way, and no duplicate account', async () => {
+      const C = await newPhone(browser, { label: 'phone CHT', config: fbConfig });
+      await C.page.goto(URL_DEV);
+      await C.page.waitForSelector('#auth-submit');
+      await signup(C.page, 'Bisi Lawal', 'CHT/PHT/26/1635', '4321');
+      await C.page.waitForSelector('[data-action=start-exam]');
+      await logout(C.page);
+      await login(C.page, 'PHT/26/1635', '4321');
+      await C.page.waitForSelector('[data-action=start-exam]', { timeout: 10000 });
+      assert((await C.page.textContent('body')).includes('CHT/PHT/26/1635'), 'should be the same account');
+      await logout(C.page);
+      await signup(C.page, 'Bisi Copy', 'PHT/26/1635', '1111');
+      await C.page.waitForFunction(() => !document.getElementById('auth-error').classList.contains('hidden'), null, { timeout: 10000 });
+      assert((await C.page.textContent('#auth-error')).includes('already has an account'));
+      await signup(C.page, 'Tolu Ade', 'PHT/26/1700', '2222');
+      await C.page.waitForSelector('[data-action=start-exam]');
+      await logout(C.page);
+      await signup(C.page, 'Tolu Copy', 'CHT/PHT/26/1700', '2222');
+      await C.page.waitForFunction(() => !document.getElementById('auth-error').classList.contains('hidden'), null, { timeout: 10000 });
+      assert((await C.page.textContent('#auth-error')).includes('already has an account'));
+      await login(C.page, 'cht/pht/26/1700', '2222');
+      await C.page.waitForSelector('[data-action=start-exam]', { timeout: 10000 });
+      await C.ctx.close();
+    });
     await t('wrong PIN is refused, correct PIN logs in', async () => {
       await B.page.click('header [data-action=dashboard]');
       await B.page.waitForSelector('[data-action=logout]');

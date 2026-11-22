@@ -28,6 +28,14 @@
   };
   function normMatric(m) { return String(m || '').toUpperCase().replace(/\s+/g, ''); }
   function sidOf(m) { return normMatric(m).replace(/[^A-Z0-9]/g, '_'); }
+  /* The "CHT/" (College of Health Technology) prefix is optional:
+   * CHT/PHT/26/1635 and PHT/26/1635 are the same student.
+   * Returns the other spelling's ID so both can be checked. */
+  var OPTIONAL_PREFIX = 'CHT_';
+  function altSidOf(m) {
+    var sid = sidOf(m);
+    return sid.indexOf(OPTIONAL_PREFIX) === 0 ? sid.slice(OPTIONAL_PREFIX.length) : OPTIONAL_PREFIX + sid;
+  }
   function err(code, message) { var e = new Error(message || code); e.code = code; return e; }
 
   // cyrb53 string hash (two seeds = 106 bits). Same result on every device.
@@ -77,7 +85,8 @@
     normMatric: normMatric,
 
     getStudent: function (matric) {
-      var s = demoDb().students[sidOf(matric)];
+      var db = demoDb();
+      var s = db.students[sidOf(matric)] || db.students[altSidOf(matric)];
       return delay(s ? Object.assign({}, s) : null);
     },
     getStudentBySid: function (sid) {
@@ -87,7 +96,7 @@
     createStudent: function (o) {
       var db = demoDb();
       var sid = sidOf(o.matric);
-      if (db.students[sid]) return delay(null).then(function () { throw err('exists'); });
+      if (db.students[sid] || db.students[altSidOf(o.matric)]) return delay(null).then(function () { throw err('exists'); });
       var now = Date.now();
       var s = {
         sid: sid, name: o.name, matric: normMatric(o.matric), hasPin: !!o.pin,
@@ -198,7 +207,12 @@
       return initPromise;
     },
 
-    getStudent: function (matric) { return FirebaseStore.getStudentBySid(sidOf(matric)); },
+    // Try the matric exactly as typed, then the other spelling (with or without CHT/).
+    getStudent: function (matric) {
+      return FirebaseStore.getStudentBySid(sidOf(matric)).then(function (s) {
+        return s || FirebaseStore.getStudentBySid(altSidOf(matric));
+      });
+    },
     getStudentBySid: function (sid) {
       return withTimeout(fs.getDoc(fs.doc(db, 'students', sid)))
         .then(function (snap) { return snap.exists() ? toStudent(snap.id, snap.data()) : null; })
@@ -208,8 +222,9 @@
     createStudent: function (o) {
       var sid = sidOf(o.matric);
       var ref = fs.doc(db, 'students', sid);
-      return withTimeout(fs.getDoc(ref)).then(function (snap) {
-        if (snap.exists()) throw err('exists');
+      var altRef = fs.doc(db, 'students', altSidOf(o.matric));
+      return withTimeout(Promise.all([fs.getDoc(ref), fs.getDoc(altRef)])).then(function (snaps) {
+        if (snaps[0].exists() || snaps[1].exists()) throw err('exists');
         var now = fs.serverTimestamp();
         var batch = fs.writeBatch(db);
         batch.set(ref, {
