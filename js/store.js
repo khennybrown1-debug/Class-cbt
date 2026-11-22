@@ -9,7 +9,7 @@
  *   students/{sid}            name, matric, hasPin, attempts, bestPct, bestScore,
  *                             bestTotal, bestAt, lastPct, lastExamId, createdAt, updatedAt
  *   students/{sid}/pin/{hash} exists only if the student chose a PIN (hash of matric + PIN)
- *   seen/{sid}                courses: { GST: { cycle, ids: [...] }, ... }, updatedAt
+ *   seen/{sid}                courses: { GNS: { cycle, ids: [...] }, ... }, updatedAt
  *   attempts/{sid}_{n}        one record per submitted exam
  * sid = matric number in capitals with any symbol replaced by "_" (UG/23/001 -> UG_23_001)
  */

@@ -2,8 +2,8 @@
 
 A JAMB style CBT practice website for a 100 level class. Everyone opens the same link on their phone, writes practice tests and sees **one shared live leaderboard**.
 
-- 4 courses: Use of English (GST), Primary Health Care (PHC), General Chemistry (CHM), Action and Use of Medicine (AUM)
-- 1,260 questions (GST 332, PHC 303, CHM 311, AUM 314), each with an explanation
+- 4 courses: Use of English (GNS), Primary Health Care (PHC), General Chemistry (CHM), Action and Use of Medicine (AUM)
+- 1,260 questions (GNS 332, PHC 303, CHM 311, AUM 314), each with an explanation
 - Every exam: 45 random questions per course (180 in total), 120 minutes
 - A student never sees the same question again until they have gone through the whole bank for that course
 - Live class leaderboard (Firebase), corrections with explanations, works on any phone
@@ -156,7 +156,7 @@ All settings are in the settings block (`js/config.js`, or at the top of `single
 | `dangerAtMinutes` | Timer turns red and blinks | `5` |
 | `requirePin` | `true` = students choose a 4 digit PIN at sign up and need it to log in | `false` |
 | `leaderboardSize` | How many students the live leaderboard shows | `100` |
-| `courses` | The course tabs and their order | GST, PHC, CHM, AUM |
+| `courses` | The course tabs and their order | GNS, PHC, CHM, AUM |
 
 **About the PIN:** decide before you share the link. With `requirePin: false`, anyone who knows a matric number can log in as that student. With `requirePin: true`, they also need the PIN. Accounts created while the PIN was off have no PIN and can still log in with the matric number only.
 

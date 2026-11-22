@@ -39,7 +39,7 @@ window.CBT_CONFIG = {
   /* Courses in the order the tabs appear. The code must match the code
    * inside the question file (js/questions/xxx.js). */
   courses: [
-    { code: "GST", title: "Use of English" },
+    { code: "GNS", title: "Use of English" },
     { code: "PHC", title: "Primary Health Care" },
     { code: "CHM", title: "General Chemistry" },
     { code: "AUM", title: "Action and Use of Medicine" }

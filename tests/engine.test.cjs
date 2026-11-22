@@ -8,7 +8,7 @@ const root = path.join(__dirname, '..');
 const sandbox = { window: {}, console };
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
-for (const f of ['js/config.js', 'js/questions/gst.js', 'js/questions/phc.js', 'js/questions/chm.js', 'js/questions/aum.js']) {
+for (const f of ['js/config.js', 'js/questions/gns.js', 'js/questions/phc.js', 'js/questions/chm.js', 'js/questions/aum.js']) {
   vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f });
 }
 const E = require(path.join(root, 'js/engine.js'));
@@ -161,7 +161,7 @@ t('all correct answers score 180/180 (100%)', () => {
 });
 t('blank script scores 0 with everything skipped', () => {
   const m = E.markExam(s1.sections, {}, id => QMAP[id]);
-  assert.strictEqual(m.score, 0); assert.strictEqual(m.perCourse.GST.skipped, PER);
+  assert.strictEqual(m.score, 0); assert.strictEqual(m.perCourse.GNS.skipped, PER);
 });
 t('mixed script: 10 right, 5 wrong per course gives 40/180 = 22.2%', () => {
   const answers = {};
@@ -181,12 +181,12 @@ t('mixed script: 10 right, 5 wrong per course gives 40/180 = 22.2%', () => {
 // ---------- seen merging (Firestore copy + phone backup) ----------
 console.log('\nMerging seen lists from two phones');
 t('same cycle: lists are combined; higher cycle wins', () => {
-  const m = E.mergeSeen({ GST: { cycle: 0, ids: ['a', 'b'] }, PHC: { cycle: 1, ids: ['x'] } }, { GST: { cycle: 0, ids: ['b', 'c'] }, PHC: { cycle: 0, ids: ['y', 'z'] } });
-  assert.deepStrictEqual(m.GST, { cycle: 0, ids: ['a', 'b', 'c'] });
+  const m = E.mergeSeen({ GNS: { cycle: 0, ids: ['a', 'b'] }, PHC: { cycle: 1, ids: ['x'] } }, { GNS: { cycle: 0, ids: ['b', 'c'] }, PHC: { cycle: 0, ids: ['y', 'z'] } });
+  assert.deepStrictEqual(m.GNS, { cycle: 0, ids: ['a', 'b', 'c'] });
   assert.deepStrictEqual(m.PHC, { cycle: 1, ids: ['x'] });
 });
 t('questions removed from a bank are ignored when picking', () => {
-  const r = E.pickForCourse(BANKS.GST, { cycle: 0, ids: ['GST-999', 'OLD-1'] }, PER);
+  const r = E.pickForCourse(BANKS.GNS, { cycle: 0, ids: ['GNS-999', 'OLD-1'] }, PER);
   assert.strictEqual(r.questions.length, PER);
   assert.ok(!r.seen.ids.includes('OLD-1'));
 });

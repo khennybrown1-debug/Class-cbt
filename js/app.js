@@ -230,7 +230,21 @@
 
   function afterLogin() {
     return retryPending().then(function () {
+      // If the question files changed (e.g. a question was removed or a course renamed),
+      // an unfinished exam or an old result may point to questions that no longer exist.
+      var known = function (o) {
+        return o && o.sections && o.sections.every(function (s) {
+          return s.items.every(function (it) { return QMAP[it.id]; });
+        });
+      };
+      var oldRes = LS.get(k('result'), null);
+      if (oldRes && !known(oldRes)) LS.del(k('result'));
       var ex = LS.get(k('exam'), null);
+      if (ex && !known(ex)) {
+        LS.del(k('exam'));
+        ex = null;
+        toast('The questions were updated, so your unfinished exam was reset. Please start a new one.', 'info', 6000);
+      }
       if (ex && ex.sid === state.student.sid && ex.sections) {
         state.exam = ex;
         if (Date.now() >= ex.endsAt) return submitExam(true);

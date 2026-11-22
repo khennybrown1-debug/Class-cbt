@@ -32,11 +32,11 @@ const REVIEWED_DIFFERENT = new Set([
   'AUM-008|AUM-009', // pharmacokinetics vs pharmacodynamics
   'AUM-061|AUM-062', // synergism vs additive effect
   'CHM-251|CHM-252', 'CHM-251|CHM-253', 'CHM-252|CHM-253', // Boyle, Charles, pressure law
-  'GST-176|GST-177', // definition of interjection vs identifying one
-  'GST-207|GST-218', // who an informal letter is for vs where the date goes
-  'GST-227|GST-228', // phrase vs clause
-  'GST-239|GST-240', // complex vs compound-complex sentence
-  'GST-293|GST-304', // "here" vs "can" in reported speech
+  'GNS-176|GNS-177', // definition of interjection vs identifying one
+  'GNS-207|GNS-218', // who an informal letter is for vs where the date goes
+  'GNS-227|GNS-228', // phrase vs clause
+  'GNS-239|GNS-240', // complex vs compound-complex sentence
+  'GNS-293|GNS-304', // "here" vs "can" in reported speech
   'PHC-094|PHC-095', // secondary vs tertiary tier
   'PHC-268|PHC-279'  // a committee function vs a non-function
 ]);

@@ -41,7 +41,7 @@ async function submit(sid, cur, r, opts = {}) {
   if (!opts.skipAttempt) {
     b.set(doc(db, 'attempts', opts.attemptId || `${sid}_${n}`), Object.assign({
       sid, name: cur.name, matric: cur.matric, score: r.score, total: r.total, pct: r.pct,
-      perCourse: { GST: { score: r.score, total: r.total, wrong: 0, skipped: 0 } }, timeUsedSec: 600, examId: r.examId,
+      perCourse: { GNS: { score: r.score, total: r.total, wrong: 0, skipped: 0 } }, timeUsedSec: 600, examId: r.examId,
       createdAt: serverTimestamp()
     }, opts.attemptOverride || {}));
   }
@@ -107,10 +107,10 @@ await t('a stand-alone fake attempt record is rejected', () => assertFails(setDo
 })));
 
 console.log('\nSeen questions');
-const seen = { courses: { GST: { cycle: 0, ids: ['GST-001', 'GST-002'] } }, updatedAt: serverTimestamp() };
+const seen = { courses: { GNS: { cycle: 0, ids: ['GNS-001', 'GNS-002'] } }, updatedAt: serverTimestamp() };
 await t('the app can create the seen record', () => assertSucceeds(setDoc(doc(db, 'seen', 'UG_24_0001'), seen)));
 await t('the app can update the seen record (including a cycle reset)', () =>
-  assertSucceeds(setDoc(doc(db, 'seen', 'UG_24_0001'), { courses: { GST: { cycle: 1, ids: [] } }, updatedAt: serverTimestamp() })));
+  assertSucceeds(setDoc(doc(db, 'seen', 'UG_24_0001'), { courses: { GNS: { cycle: 1, ids: [] } }, updatedAt: serverTimestamp() })));
 await t('the seen record can be read', () => assertSucceeds(getDoc(doc(db, 'seen', 'UG_24_0001'))));
 await t('seen record for a student who does not exist is rejected', () => assertFails(setDoc(doc(db, 'seen', 'NOBODY'), seen)));
 await t('seen record with extra fields is rejected', () =>

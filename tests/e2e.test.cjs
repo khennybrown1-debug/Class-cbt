@@ -181,7 +181,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
   await t('start exam: 4 course tabs with 0/45, timer, question with 4 options', async () => {
     await startExam(page);
     const tabs = await page.$$eval('#exam-tabs .tab', (els) => els.map((e) => e.textContent.replace(/\s+/g, '')));
-    assert(JSON.stringify(tabs) === JSON.stringify(['GST0/45', 'PHC0/45', 'CHM0/45', 'AUM0/45']), JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === JSON.stringify(['GNS0/45', 'PHC0/45', 'CHM0/45', 'AUM0/45']), JSON.stringify(tabs));
     assert((await page.$$('#q-card .opt')).length === 4);
     assert((await page.$$('#palette .pal')).length === 45);
     const tt = await page.textContent('#timer-text');
@@ -208,14 +208,14 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     assert((await page.textContent('#q-card')).includes('Question 30 of 45'));
     await page.click('#palette .pal[data-i="0"]');
   });
-  await t('answer 20 GST correctly, switch to PHC tab and answer 10 correctly', async () => {
+  await t('answer 20 GNS correctly, switch to PHC tab and answer 10 correctly', async () => {
     await page.click('#palette .pal[data-i="0"]');
     await answerN(page, 20);
     await page.click('#exam-tabs .tab[data-c="1"]');
     assert((await page.textContent('#q-card')).includes('Primary Health Care'));
     await answerN(page, 10);
     const tabs = await page.$$eval('#exam-tabs .tab', (els) => els.map((e) => e.textContent.replace(/\s+/g, '')));
-    assert(tabs[0] === 'GST20/45' && tabs[1] === 'PHC10/45', JSON.stringify(tabs));
+    assert(tabs[0] === 'GNS20/45' && tabs[1] === 'PHC10/45', JSON.stringify(tabs));
     timerBefore = timerSeconds(await page.textContent('#timer-text'));
   });
   await t('refresh mid-exam: warning shown, timer keeps counting, answers kept', async () => {
@@ -226,7 +226,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     const after = timerSeconds(await page.textContent('#timer-text'));
     assert(after < timerBefore && after > timerBefore - 30, `timer before ${timerBefore}s, after ${after}s`);
     const tabs = await page.$$eval('#exam-tabs .tab', (els) => els.map((e) => e.textContent.replace(/\s+/g, '')));
-    assert(tabs[0] === 'GST20/45' && tabs[1] === 'PHC10/45', JSON.stringify(tabs));
+    assert(tabs[0] === 'GNS20/45' && tabs[1] === 'PHC10/45', JSON.stringify(tabs));
     assert((await page.textContent('#q-card')).includes('Primary Health Care'), 'did not return to the same course');
   });
   await t('submit asks for confirmation and lists unanswered per course', async () => {
@@ -308,7 +308,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     assert(r.start.length >= 3 && r.start.some((m) => m.includes('Every expert was once a beginner')), JSON.stringify(r.start));
   });
   await t('no em dashes anywhere in the UI text or questions', async () => {
-    const files = ['index.html', 'js/app.js', 'js/config.js', 'js/questions/gst.js', 'js/questions/phc.js', 'js/questions/chm.js', 'js/questions/aum.js'];
+    const files = ['index.html', 'js/app.js', 'js/config.js', 'js/questions/gns.js', 'js/questions/phc.js', 'js/questions/chm.js', 'js/questions/aum.js'];
     for (const f of files) assert(!fs.readFileSync(path.join(ROOT, f), 'utf8').includes('\u2014'), 'em dash in ' + f);
     assert(!(await page.textContent('body')).includes('\u2014'), 'em dash on the page');
   });
