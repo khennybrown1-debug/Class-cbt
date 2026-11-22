@@ -49,6 +49,14 @@ async function newPhone(browser, { config, label }) {
   page.on('pageerror', (e) => errors.push(`[${label}] ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error' && !/favicon|ERR_|net::|Failed to load resource|PERMISSION_DENIED|GrpcConnection/.test(m.text())) errors.push(`[${label}] console: ${m.text()}`); });
   page.on('dialog', (d) => { page._lastDialog = d.type(); d.accept().catch(() => {}); });
+  // Close the top-3 medal pop-up automatically (it is tested on its own in section H).
+  await page.addInitScript(() => {
+    new MutationObserver(() => {
+      if (window.__keepMedal) return;
+      const b = document.querySelector('.medal') && document.querySelector('.modal-panel .btn-primary');
+      if (b) { window.__medals = (window.__medals || 0) + 1; b.click(); }
+    }).observe(document, { childList: true, subtree: true });
+  });
   await page.route('https://cdn.tailwindcss.com/**', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.tailwind={};document.head.insertAdjacentHTML("beforeend",' + JSON.stringify('<style>' + TW_CSS + '</style>') + ');' }));
   await page.route('https://www.gstatic.com/firebasejs/**', (r) => {
     const file = path.join(FIREBASE_DIR, path.basename(new URL(r.request().url()).pathname));
@@ -331,6 +339,45 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     assert(!(await page.textContent('body')).includes('\u2014'), 'em dash on the page');
   });
   await ctxA.close();
+
+  // =================================================================
+  console.log('\nH. Medal pop-up for the top 3');
+  // =================================================================
+  {
+    const { ctx, page: p } = await newPhone(browser, { label: 'medal' });
+    await p.goto(URL_DEV);
+    await p.waitForSelector('#auth-submit');
+    await p.evaluate(() => { window.__keepMedal = true; });
+    await signup(p, 'Kemi Adeyemi', 'UG/24/0900');
+    await p.waitForSelector('[data-action=start-exam]');
+    await p.evaluate(() => { window.__keepMedal = true; });
+    await startExam(p);
+    await answerN(p, 30);
+    await p.click('header [data-action=submit-exam]');
+    await p.click('.modal-panel .btn-primary');
+    await t('first place gets a gold medal pop-up with congratulations', async () => {
+      await p.waitForSelector('.medal-gold', { timeout: 6000 });
+      const txt = await p.textContent('.modal-panel');
+      assert(txt.includes('You are number 1!') && txt.includes('Congratulations, Kemi!'), txt);
+      await sleep(1200);
+      await shot(p, '19-medal-gold');
+      await p.click('.modal-panel .btn-primary');
+    });
+    await t('the medal does not pop up again for the same position in the same visit', async () => {
+      await p.click('header [data-action=dashboard]');
+      await p.waitForSelector('#lb .podium');
+      await sleep(1500);
+      assert(!(await p.$('.medal')), 'medal shown twice');
+    });
+    await t('next visit says "still" in first position', async () => {
+      await p.evaluate(() => sessionStorage.clear());
+      await p.reload();
+      await p.evaluate(() => { window.__keepMedal = true; });
+      await p.waitForSelector('.medal-gold', { timeout: 6000 });
+      assert((await p.textContent('.modal-panel')).includes('You are still number 1!'));
+    });
+    await ctx.close();
+  }
 
   // =================================================================
   console.log('\nG. Quit exam and log out confirmation');

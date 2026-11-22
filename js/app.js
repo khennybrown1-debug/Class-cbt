@@ -124,10 +124,11 @@
     var root = document.getElementById('modal-root');
     root.innerHTML =
       '<div class="modal-backdrop fixed inset-0 z-50 bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" data-modal-bg>' +
-      '<div class="modal-panel bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true">' +
+      '<div class="modal-panel bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto' + (opts.center ? ' text-center' : '') + '" role="dialog" aria-modal="true">' +
+      (opts.top || '') +
       '<h2 class="text-lg font-extrabold text-blue-900">' + esc(opts.title) + '</h2>' +
       '<div class="mt-3 text-slate-600 text-sm leading-relaxed">' + opts.body + '</div>' +
-      '<div class="mt-6 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">' +
+      '<div class="mt-6 flex flex-col-reverse sm:flex-row gap-3 ' + (opts.center ? 'sm:justify-center' : 'sm:justify-end') + '">' +
       (opts.actions || []).map(function (a, i) {
         var cls = a.primary ? 'btn btn-primary' : a.danger ? 'btn btn-danger' : 'btn btn-ghost';
         return '<button type="button" class="' + cls + '" data-modal-action="' + i + '">' + esc(a.label) + '</button>';
@@ -604,6 +605,7 @@
         }
         renderLeaderboard();
         renderStats();
+        if (state.rankInfo) maybeMedal(state.rankInfo.rank);
       }, function (e) {
         state.lbError = e;
         renderLeaderboard();
@@ -622,9 +624,47 @@
       var idx = (state.lb || []).findIndex(function (s) { return s.sid === me.sid; });
       if (idx >= 0) ri.rank = idx + 1;
       state.rankInfo = ri;
-      if (state.view === 'dashboard') { renderStats(); renderLeaderboard(); }
+      if (state.view === 'dashboard') { renderStats(); renderLeaderboard(); maybeMedal(ri.rank); }
       return ri;
     }).catch(function (e) { console.warn('rank', e); return null; });
+  }
+
+  /* ---------- medal pop-up for the top 3 ---------- */
+  var MEDALS = {
+    1: { name: 'gold', place: 'first', title: 'You are number 1!', still: 'You are still number 1!',
+      msg: ['You are leading the whole class. Keep the crown!', 'Top of the class! Everyone is chasing you now.', 'First place is yours. Stay sharp and defend it!'] },
+    2: { name: 'silver', place: 'second', title: 'You are in 2nd place!', still: 'You are still in 2nd place!',
+      msg: ['Silver medal! The top spot is only one step away.', 'Second in the whole class. One more push and you are number 1!', 'Brilliant work. Keep practising and take the crown.'] },
+    3: { name: 'bronze', place: 'third', title: 'You are in 3rd place!', still: 'You are still in 3rd place!',
+      msg: ['You are on the podium! Keep climbing.', 'Bronze medal! You are among the best in the class.', 'Top 3 in the class. Keep going and aim higher!'] }
+  };
+  function sessGet(key) { try { return sessionStorage.getItem(key); } catch (e) { return null; } }
+  function sessSet(key, v) { try { sessionStorage.setItem(key, v); } catch (e) { /* ignore */ } }
+
+  /* Shows once per visit for each new position (1st, 2nd or 3rd). */
+  function maybeMedal(rank) {
+    var me = state.student;
+    if (!me || !me.attempts || !rank || rank > 3) return;
+    if (state.view !== 'dashboard' && state.view !== 'result') return;
+    if (state.modalOpen) return;
+    var sKey = 'cbt_medal_' + me.sid;
+    if (sessGet(sKey) === String(rank)) return;
+    sessSet(sKey, String(rank));
+    var lastKey = 'cbt_lastmedal_' + me.sid;
+    var still = String(LS.get(lastKey, '')) === String(rank);
+    LS.set(lastKey, rank);
+    var m = MEDALS[rank];
+    var confetti = '';
+    for (var i = 0; i < 14; i++) confetti += '<span class="confetti c' + (i % 7) + '" style="left:' + (6 + i * 6.5) + '%;animation-delay:' + (i % 5) * 0.12 + 's"></span>';
+    openModal({
+      center: true,
+      title: still ? m.still : m.title,
+      top: '<div class="medal-wrap">' + confetti +
+        '<div class="medal medal-' + m.name + '"><span class="medal-ribbon"></span><span class="medal-disc">' + rank + '</span></div></div>',
+      body: '<p class="text-base font-semibold text-slate-700">Congratulations, ' + esc(firstName(me.name)) + '! ' + esc(pick(m.msg)) + '</p>' +
+        '<p class="mt-2">Best score: <b>' + pct(me.bestPct) + '</b> (' + me.bestScore + '/' + me.bestTotal + ')</p>',
+      actions: [{ label: 'Thank you!', primary: true }]
+    });
   }
 
   /* =====================================================================
@@ -1020,6 +1060,7 @@
       '<button type="button" class="btn btn-primary flex-1 text-base" data-action="corrections">View corrections</button>' +
       '<button type="button" class="btn btn-ghost flex-1 text-base" data-action="dashboard">Back to dashboard</button></div>' +
       '</main>' + footer();
+    if (res.synced && res.rank && res.rank <= 3) setTimeout(function () { maybeMedal(res.rank); }, 1400);
     requestAnimationFrame(function () {
       var fg = document.querySelector('.ring-fg');
       if (fg) setTimeout(function () { fg.style.strokeDashoffset = fg.getAttribute('data-off'); }, 60);
