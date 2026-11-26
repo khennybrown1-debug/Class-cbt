@@ -258,3 +258,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .ck-danger { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
 .ck-eq { background: var(--blue); color: #fff; border-color: var(--blue); font-size: 1.2rem; }
 @media (max-height: 700px) { .ck { height: 34px; } .calc-display { min-height: 64px; } }
+
+/* ---------- course picker ---------- */
+.pick-row { width: 100%; display: flex; align-items: center; gap: .7rem; padding: .6rem .7rem; border-radius: 1rem; border: 1.5px solid #dbe5fb; background: #fff; cursor: pointer; transition: all .12s ease; }
+.pick-row.pick-on { border-color: var(--blue); background: var(--blue-light); }
+.pick-box { width: 24px; height: 24px; border-radius: 7px; border: 2px solid #93c5fd; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: #fff; }
+.pick-on .pick-box { background: var(--blue); border-color: var(--blue); }

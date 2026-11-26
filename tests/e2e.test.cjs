@@ -87,8 +87,14 @@ async function logout(page) {
   await page.click('[data-modal-action="1"]');
   await page.waitForSelector('#auth-submit');
 }
-async function startExam(page) {
+// Opens the course picker and ticks exactly these courses (default: the original four).
+async function startExam(page, codes = ['GNS', 'PHC', 'CHM', 'AUM']) {
   await page.click('[data-action=start-exam]');
+  await page.waitForSelector('.modal-panel [data-pick]');
+  for (const code of ['GNS', 'PHC', 'CHM', 'AUM', 'PHY']) {
+    const on = await page.$eval(`[data-pick="${code}"]`, (e) => e.classList.contains('pick-on'));
+    if (on !== codes.includes(code)) await page.click(`[data-pick="${code}"]`);
+  }
   await page.click('.modal-panel .btn-primary');
   await page.waitForSelector('#q-card .opt');
 }
@@ -159,7 +165,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
   await t('dashboard shows stats, seen progress, instructions, courses, credit', async () => {
     await page.waitForSelector('#seen .bar');
     const txt = await page.textContent('body');
-    for (const s of ['Rank', 'Best score', 'Attempts', '0 of 332 seen', '0 of 303 seen', 'Exam instructions', 'Use of English', 'Primary Health Care', 'General Chemistry', 'Action and Use of Medicine', 'Designed by Faruk Dynova', 'No scores yet'])
+    for (const s of ['Rank', 'Overall', 'Attempts', '0 of 332 seen', '0 of 303 seen', 'Exam instructions', 'Use of English', 'Primary Health Care', 'General Chemistry', 'Action and Use of Medicine', 'Designed by Faruk Dynova', 'No scores yet'])
       assert(txt.includes(s), 'missing: ' + s);
     await noHorizontalScroll(page);
   });
@@ -267,7 +273,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
   await t('result: 30/180, 16.7%, ring, per course, time used, motivation, rank #1', async () => {
     await submit(page);
     const txt = await page.textContent('body');
-    for (const s of ['16.7%', '30 / 180', 'Time used', 'Score per course', '20/45', '10/45', "You're currently #1 on the leaderboard", 'You are on the leaderboard!'])
+    for (const s of ['16.7%', '30 / 180', 'Time used', 'Score per course', '20/45', '10/45', "You're currently #1 on the Overall leaderboard", 'You joined the Overall leaderboard!', 'Overall average'])
       assert(txt.includes(s), 'missing: ' + s);
     const msgs = ['Every expert was once a beginner', 'Do not give up', 'Great things take time', 'This is just the start'];
     assert(msgs.some((m) => txt.includes(m)), 'no low band motivational message');
@@ -314,10 +320,10 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     await page.click('header [data-action=dashboard]');
     await page.waitForSelector('#lb .podium');
     const lb = await page.textContent('#lb');
-    assert(lb.includes('Amina Bello') && lb.includes('16.7%') && lb.includes('30/180'), lb);
+    assert(lb.includes('Amina Bello') && lb.includes('4 courses'), lb);
     await page.waitForFunction(() => document.getElementById('seen').textContent.includes('45 of 332'));
     const stats = await page.textContent('#stats');
-    assert(stats.includes('#1') && stats.includes('16.7%') && stats.includes('1'), stats);
+    assert(stats.includes('#1') && stats.includes('Overall') && stats.includes('average of 4 courses'), stats);
   });
   await t('second student on the same device joins the same leaderboard and takes #1', async () => {
     await logout(page);
@@ -330,7 +336,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     await submit(page);
     const txt = await page.textContent('body');
     assert(txt.includes('75 / 180') && txt.includes('41.7%'), 'score');
-    assert(txt.includes("You're currently #1 on the leaderboard"), 'rank');
+    assert(txt.includes("You're currently #1 on the Overall leaderboard"), 'rank');
     await page.click('header [data-action=dashboard]');
     await page.waitForSelector('#lb .podium');
     const names = await page.$$eval('#lb .podium-name', (els) => els.map((e) => e.textContent)); // must be right on first render
@@ -398,6 +404,86 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
   }
 
   // =================================================================
+  console.log('\nI. Choosing courses, Physics and course leaderboards');
+  // =================================================================
+  {
+    const { ctx, page: p } = await newPhone(browser, { label: 'picker' });
+    await p.goto(URL_DEV);
+    await p.waitForSelector('#auth-submit');
+    await signup(p, 'Yusuf Bello', 'PHT/25/1006');
+    await p.waitForSelector('[data-action=start-exam]');
+    await t('the course picker lists all 5 courses with Select all', async () => {
+      await p.click('[data-action=start-exam]');
+      await p.waitForSelector('.modal-panel [data-pick]');
+      const codes = await p.$$eval('[data-pick]', (els) => els.map((e) => e.getAttribute('data-pick')));
+      assert(JSON.stringify(codes) === JSON.stringify(['GNS', 'PHC', 'CHM', 'AUM', 'PHY']), JSON.stringify(codes));
+      assert((await p.textContent('#pick-sum')).includes('5 courses') && (await p.textContent('#pick-sum')).includes('150 minutes'));
+      await p.click('[data-pick-all]'); // clear all
+      assert(await p.$eval('.modal-panel .btn-primary', (b) => b.disabled), 'Start must be disabled with nothing chosen');
+      await p.click('[data-pick="PHY"]');
+      assert((await p.textContent('#pick-sum')).replace(/\s+/g, ' ').includes('1 course, 45 questions, 30 minutes'), await p.textContent('#pick-sum'));
+      await shot(p, '21-course-picker');
+      await p.click('.modal-panel [data-modal-action="0"]');
+    });
+    await t('Physics-only exam: one PHY tab, 30 minutes, questions from the class file', async () => {
+      await startExam(p, ['PHY']);
+      const tabs = await p.$$eval('#exam-tabs .tab', (els) => els.map((e) => e.textContent.replace(/\s+/g, '')));
+      assert(JSON.stringify(tabs) === JSON.stringify(['PHY0/45']), JSON.stringify(tabs));
+      const secs = timerSeconds(await p.textContent('#timer-text'));
+      assert(secs > 29 * 60 && secs <= 30 * 60, 'timer ' + secs);
+      const ids = await S(p, () => window.CBTApp.state.exam.sections[0].items.map((i) => i.id));
+      assert(ids.length === 45 && ids.every((id) => /^PHY-\d{3}$/.test(id)), 'not all PHY questions');
+      await answerN(p, 10);
+      await submit(p);
+      const txt = await p.textContent('body');
+      assert(txt.includes('10 / 45') && txt.includes('You are on the PHY leaderboard!'), txt.slice(0, 300));
+      assert(txt.includes("You're currently #1 on the PHY leaderboard"), 'PHY rank');
+      assert(txt.includes('Take 3 more courses to join the Overall leaderboard'), 'overall hint');
+    });
+    await t('PHY leaderboard tab shows the score; Overall explains the 4-course rule', async () => {
+      await p.click('header [data-action=dashboard]');
+      await p.waitForSelector('#lb-tabs');
+      await p.click('[data-action=board-tab][data-board="PHY"]');
+      await p.waitForFunction(() => document.getElementById('lb').textContent.includes('Yusuf Bello'));
+      assert((await p.textContent('#lb')).includes('10/45'));
+      await shot(p, '22-phy-leaderboard');
+      await p.click('[data-action=board-tab][data-board="overall"]');
+      await p.waitForFunction(() => /after taking 4 courses|Take at least 4 courses/.test(document.getElementById('lb').textContent));
+      assert((await p.textContent('#seen')).includes('Your best: 22.2%'), 'course best on progress card');
+    });
+    await t('seen lists of courses that were not picked are kept', async () => {
+      await startExam(p, ['GNS']);
+      await p.click('#palette [data-action=quit-exam]');
+      await p.click('.modal-panel .btn-danger');
+      await p.waitForSelector('#seen .bar');
+      await p.waitForFunction(() => document.getElementById('seen').textContent.includes('45 of 98'));
+    });
+    await ctx.close();
+  }
+  {
+    const { ctx, page: p } = await newPhone(browser, { label: 'upgrade' });
+    await p.goto(URL_DEV);
+    await p.waitForSelector('#auth-submit');
+    await t('old accounts are upgraded: course bests and overall rebuilt from past exams', async () => {
+      await S(p, () => {
+        const db = { students: {}, seen: {}, attempts: {}, pins: {} };
+        db.students.OLD_1 = { sid: 'OLD_1', name: 'Old Student', matric: 'OLD/1', hasPin: false, attempts: 2, bestPct: 50, bestScore: 90, bestTotal: 180, bestAt: 1, lastPct: 40, lastExamId: 'b', createdAt: 1 };
+        const pc = (a, b, c, d) => ({ GNS: { score: a, total: 45 }, PHC: { score: b, total: 45 }, CHM: { score: c, total: 45 }, AUM: { score: d, total: 45 } });
+        db.attempts.OLD_1_1 = { sid: 'OLD_1', perCourse: pc(30, 20, 20, 20), createdAt: 1 };
+        db.attempts.OLD_1_2 = { sid: 'OLD_1', perCourse: pc(10, 40, 10, 12), createdAt: 2 };
+        localStorage.setItem('cbt_demo_db_v1', JSON.stringify(db));
+        localStorage.setItem('cbt_session_v1', JSON.stringify({ sid: 'OLD_1' }));
+      });
+      await p.reload();
+      await p.waitForSelector('#stats');
+      // bests: GNS 66.7, PHC 88.9, CHM 44.4, AUM 44.4 -> average 61.1
+      await p.waitForFunction(() => document.getElementById('stats').textContent.includes('61.1%'), null, { timeout: 5000 });
+      await p.waitForFunction(() => document.getElementById('lb').textContent.includes('Old Student'));
+    });
+    await ctx.close();
+  }
+
+  // =================================================================
   console.log('\nG. Quit exam and log out confirmation');
   // =================================================================
   {
@@ -436,7 +522,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
   console.log('\nB. Timer colours and auto submit (exam shortened to 15 seconds)');
   // =================================================================
   {
-    const { ctx, page: p } = await newPhone(browser, { label: 'timer', config: configWith({ examMinutes: 0.25, warnAtMinutes: 0.2, dangerAtMinutes: 0.1 }) });
+    const { ctx, page: p } = await newPhone(browser, { label: 'timer', config: configWith({ minutesPerCourse: 0.0625, warnAtMinutes: 0.2, dangerAtMinutes: 0.1 }) });
     await p.goto(URL_DEV);
     await p.waitForSelector('#auth-submit');
     await signup(p, 'Tunde Ade', 'UG/24/0500');
@@ -525,7 +611,8 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
       names.forEach((n, i) => {
         const sid = 'CLS_' + (i + 1);
         db.students[sid] = { sid, name: n, matric: 'CLS/24/' + String(i + 1).padStart(3, '0'), hasPin: false, attempts: 1 + (i % 4),
-          bestPct: pcts[i], bestScore: Math.round(pcts[i] * 1.8), bestTotal: 180, bestAt: 1000 + (i === 1 ? 50 : i === 2 ? 10 : i), lastPct: pcts[i], lastExamId: 'x' + i, createdAt: 1 };
+          bestPct: pcts[i], bestScore: Math.round(pcts[i] * 1.8), bestTotal: 180, bestAt: 1000 + (i === 1 ? 50 : i === 2 ? 10 : i), lastPct: pcts[i], lastExamId: 'x' + i, createdAt: 1,
+          courseBest: { GNS: pcts[i], PHC: pcts[i], CHM: pcts[i], AUM: pcts[i] }, coursesTaken: 4, overallPct: pcts[i], overallAt: 1000 + (i === 1 ? 50 : i === 2 ? 10 : i) };
       });
       localStorage.setItem('cbt_demo_db_v1', JSON.stringify(db));
       localStorage.setItem('cbt_session_v1', JSON.stringify({ sid: 'CLS_9' }));
@@ -544,7 +631,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     await t('positions 4 to 6 show position, name, matric, attempts, best % and score', async () => {
       const rows = await p.$$eval('#lb .lb-row', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
       assert(rows.length === 3, JSON.stringify(rows));
-      assert(rows[0].startsWith('4') && rows[0].includes('Oluwaseun Ade') && rows[0].includes('CLS/24/004') && rows[0].includes('attempt') && rows[0].includes('76.7%') && rows[0].includes('138/180'), rows[0]);
+      assert(rows[0].startsWith('4') && rows[0].includes('Oluwaseun Ade') && rows[0].includes('CLS/24/004') && rows[0].includes('attempt') && rows[0].includes('76.7%') && rows[0].includes('4 courses'), rows[0]);
     });
     await t('student outside the shown list sees "Your position: #9 of 10 with 47.2%"', async () => {
       await p.waitForFunction(() => document.getElementById('lb').textContent.includes('Your position'), null, { timeout: 5000 });
@@ -685,7 +772,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
       await A.page.waitForSelector('#stats');
       await A.page.waitForFunction(() => document.getElementById('stats').textContent.includes('#2'), null, { timeout: 10000 });
       const s = await A.page.textContent('#stats');
-      assert(s.includes('33.3%') && s.includes('60/180'), s);
+      assert(s.includes('33.3%') && s.includes('average of 4 courses'), s);
     });
     await A.ctx.close(); await B.ctx.close();
   } else {

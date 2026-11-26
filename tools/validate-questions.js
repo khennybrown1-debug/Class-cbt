@@ -21,6 +21,9 @@ const path = require('path');
 const vm = require('vm');
 
 const MIN_QUESTIONS = 300;
+// Banks supplied by the class (copied exactly from their file). They may be smaller than 300,
+// and similar-looking pairs are only reported, because the questions must not be changed.
+const PROVIDED = { PHY: 'PHY 111 CBT QUESTIONS spreadsheet' };
 const DIR = path.join(__dirname, '..', 'js', 'questions');
 const SIM_QUESTION = 0.72;   // question text similarity that counts as a near duplicate
 const SIM_FACT = 0.6;        // question + correct answer similarity (same fact tested twice)
@@ -78,7 +81,8 @@ Object.keys(banks).forEach(code => {
   const bank = banks[code];
   const qs = bank.questions || [];
   console.log(`\n${code} (${bank.title}): ${qs.length} questions`);
-  if (qs.length < MIN_QUESTIONS) err(`only ${qs.length} questions, need at least ${MIN_QUESTIONS}`);
+  if (PROVIDED[code]) console.log(`  (provided bank: ${PROVIDED[code]}; minimum size not applied)`);
+  else if (qs.length < MIN_QUESTIONS) err(`only ${qs.length} questions, need at least ${MIN_QUESTIONS}`);
 
   const topics = {};
   qs.forEach((x, i) => {
@@ -112,7 +116,8 @@ Object.keys(banks).forEach(code => {
   }));
   const seenText = {};
   prepared.forEach(p => {
-    if (seenText[p.exact]) err(`${p.id}: identical question text to ${seenText[p.exact]}`);
+    if (seenText[p.exact] && PROVIDED[code]) console.log(`  NOTE    ${p.id} has the same wording as ${seenText[p.exact]} but different options (provided bank, left as written)`);
+    else if (seenText[p.exact]) err(`${p.id}: identical question text to ${seenText[p.exact]}`);
     else seenText[p.exact] = p.id;
   });
   for (let i = 0; i < prepared.length; i++) {
@@ -123,6 +128,7 @@ Object.keys(banks).forEach(code => {
       const sameAnswer = a.ans.length > 3 && a.ans === b.ans;
       if (REVIEWED_DIFFERENT.has(a.id + '|' + b.id)) continue;
       if (sq >= SIM_QUESTION || sf >= SIM_FACT || (sameAnswer && sq >= 0.45)) {
+        if (PROVIDED[code]) { console.log(`  NOTE    ${a.id} ~ ${b.id} look similar (provided bank, left as written)`); continue; }
         warn(`${a.id} ~ ${b.id}  (question ${sq.toFixed(2)}, fact ${sf.toFixed(2)}${sameAnswer ? ', same answer' : ''})`);
       }
     }

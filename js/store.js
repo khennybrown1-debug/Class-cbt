@@ -7,7 +7,11 @@
  *
  * Firestore layout
  *   students/{sid}            name, matric, hasPin, attempts, bestPct, bestScore,
- *                             bestTotal, bestAt, lastPct, lastExamId, createdAt, updatedAt
+ *                             bestTotal, bestAt, lastPct, lastExamId, createdAt, updatedAt,
+ *                             courseBest {GNS: 66.7, ...}, coursesTaken, overallPct, overallAt
+ *                             (overallPct = average of course bests, only after 4+ courses)
+ *   board_{CODE}/{sid}        one leaderboard record per course: name, matric, bestPct,
+ *                             bestScore, bestTotal, bestAt, attempts, src (attempt id), updatedAt
  *   students/{sid}/pin/{hash} exists only if the student chose a PIN (hash of matric + PIN)
  *   seen/{sid}                courses: { GNS: { cycle, ids: [...] }, ... }, updatedAt
  *   attempts/{sid}_{n}        one record per submitted exam
@@ -60,23 +64,107 @@
       p.then(function (v) { clearTimeout(t); resolve(v); }, function (e) { clearTimeout(t); reject(e); });
     });
   }
-  function sortBoard(list) {
-    return list
-      .filter(function (s) { return (s.attempts || 0) > 0; })
-      .sort(function (a, b) { return (b.bestPct - a.bestPct) || ((a.bestAt || 0) - (b.bestAt || 0)) || a.name.localeCompare(b.name); });
+  var MIN_OVERALL = Math.max(1, parseInt(CFG.overallMinCourses, 10) || 4);
+  var LB_SIZE = CFG.leaderboardSize || 100;
+  function pctOf(score, total) { return total ? Math.round(score / total * 1000) / 10 : 0; }
+  function round1(x) { return Math.round(x * 10) / 10; }
+  function overallOf(courseBest) {
+    var keys = Object.keys(courseBest || {});
+    if (keys.length < MIN_OVERALL) return null;
+    var sum = keys.reduce(function (s, k2) { return s + (Number(courseBest[k2]) || 0); }, 0);
+    return round1(sum / keys.length);
+  }
+  function sortEntries(list) {
+    return list.sort(function (a, b) {
+      return (b.pct - a.pct) || ((a.at || 0) - (b.at || 0)) || String(a.name).localeCompare(String(b.name));
+    });
   }
   function localSeenKey(sid) { return 'cbt_seen_' + sid; }
+
+  /*
+   * Work out what a submitted exam changes. Shared by demo and Firebase mode.
+   *  student: current student record; boards: { CODE: current course record or null }
+   *  r: { perCourse: { CODE: { score, total } }, ... }; now: timestamp value to store
+   */
+  function planSubmission(student, boards, r, attemptId, now) {
+    var courseBest = Object.assign({}, student.courseBest || {});
+    var improved = [];
+    var newBoards = {};
+    Object.keys(r.perCourse || {}).forEach(function (code) {
+      var pc = r.perCourse[code];
+      var p = pctOf(pc.score, pc.total);
+      var cur = boards[code];
+      var b;
+      if (!cur) {
+        b = { bestPct: p, bestScore: pc.score, bestTotal: pc.total, bestAt: now, attempts: 1 };
+        improved.push(code);
+      } else if (p > cur.bestPct) {
+        b = { bestPct: p, bestScore: pc.score, bestTotal: pc.total, bestAt: now, attempts: (cur.attempts || 0) + 1 };
+        improved.push(code);
+      } else {
+        b = { bestPct: cur.bestPct, bestScore: cur.bestScore, bestTotal: cur.bestTotal, bestAt: cur.bestAtRaw, attempts: (cur.attempts || 0) + 1 };
+      }
+      b.name = student.name; b.matric = student.matric; b.src = attemptId; b.updatedAt = now;
+      newBoards[code] = b;
+      courseBest[code] = b.bestPct;
+    });
+    var overall = overallOf(courseBest);
+    var studentFields = { courseBest: courseBest, coursesTaken: Object.keys(courseBest).length };
+    if (overall !== null && overall !== student.overallPct) { studentFields.overallPct = overall; studentFields.overallAt = now; }
+    return {
+      studentFields: studentFields, boards: newBoards, improved: improved,
+      overallBefore: student.overallPct == null ? null : student.overallPct, overallAfter: overall
+    };
+  }
+
+  /* Rebuild course bests from old exam records (for accounts made before course leaderboards). */
+  function planMigration(attemptList) {
+    var per = {};
+    attemptList.forEach(function (a) {
+      Object.keys(a.perCourse || {}).forEach(function (code) {
+        var pc = a.perCourse[code];
+        if (!pc || !pc.total) return;
+        var p = pctOf(pc.score, pc.total);
+        var c = per[code] = per[code] || { attempts: 0, best: null };
+        c.attempts++;
+        if (!c.best || p > c.best.pct || (p === c.best.pct && a.at < c.best.at)) c.best = { pct: p, score: pc.score, total: pc.total, src: a.id, at: a.at };
+      });
+    });
+    var courseBest = {};
+    Object.keys(per).forEach(function (code) { courseBest[code] = per[code].best.pct; });
+    return { per: per, courseBest: courseBest, overall: overallOf(courseBest) };
+  }
+
+  function entryFromStudent(s) {
+    return { sid: s.sid, name: s.name, matric: s.matric, pct: s.overallPct, at: s.overallAt || 0, attempts: s.attempts || 0, courses: s.coursesTaken || 0 };
+  }
 
   /* =====================================================================
    * DEMO STORE (localStorage only)
    * ===================================================================== */
   var DEMO_KEY = 'cbt_demo_db_v1';
-  function demoDb() { return LS.get(DEMO_KEY, null) || { students: {}, seen: {}, attempts: {}, pins: {} }; }
+  function demoDb() {
+    var d = LS.get(DEMO_KEY, null) || {};
+    d.students = d.students || {}; d.seen = d.seen || {}; d.attempts = d.attempts || {}; d.pins = d.pins || {}; d.boards = d.boards || {};
+    return d;
+  }
   function demoSave(db) {
     LS.set(DEMO_KEY, db);
     try { window.dispatchEvent(new Event('cbt-demo-change')); } catch (e) { /* ignore */ }
   }
   function delay(v) { return new Promise(function (r) { setTimeout(function () { r(v); }, 250); }); }
+  function demoBoard(db, code) { return db.boards[code] = db.boards[code] || {}; }
+  function demoEntries(db, board) {
+    if (board === 'overall') {
+      return Object.keys(db.students).map(function (k2) { return db.students[k2]; })
+        .filter(function (s) { return s.overallPct != null; }).map(entryFromStudent);
+    }
+    var b = db.boards[board] || {};
+    return Object.keys(b).map(function (sid) {
+      var x = b[sid];
+      return { sid: sid, name: x.name, matric: x.matric, pct: x.bestPct, score: x.bestScore, total: x.bestTotal, at: x.bestAt || 0, attempts: x.attempts || 0 };
+    });
+  }
 
   var DemoStore = {
     mode: 'demo',
@@ -100,7 +188,8 @@
       var now = Date.now();
       var s = {
         sid: sid, name: o.name, matric: normMatric(o.matric), hasPin: !!o.pin,
-        attempts: 0, bestPct: 0, bestScore: 0, bestTotal: 0, bestAt: now, lastPct: 0, lastExamId: '', createdAt: now
+        attempts: 0, bestPct: 0, bestScore: 0, bestTotal: 0, bestAt: now, lastPct: 0, lastExamId: '', createdAt: now,
+        courseBest: {}, coursesTaken: 0
       };
       db.students[sid] = s;
       if (o.pin) db.pins[sid] = pinHash(sid, o.pin);
@@ -125,26 +214,45 @@
       var db = demoDb();
       var s = db.students[sid];
       if (!s) return Promise.reject(err('not-found'));
-      var previousBest = s.bestPct;
-      if (s.lastExamId === r.examId) return delay({ student: Object.assign({}, s), improved: false, previousBest: previousBest, alreadySaved: true });
-      s.attempts += 1;
-      s.lastPct = r.pct;
-      s.lastExamId = r.examId;
-      var improved = r.pct > s.bestPct;
-      if (improved) { s.bestPct = r.pct; s.bestScore = r.score; s.bestTotal = r.total; s.bestAt = Date.now(); }
-      db.attempts[sid + '_' + s.attempts] = {
+      if (s.lastExamId === r.examId) return delay({ student: Object.assign({}, s), improved: [], alreadySaved: true, overallBefore: s.overallPct, overallAfter: s.overallPct });
+      var n = s.attempts + 1;
+      var now = Date.now();
+      var cur = {};
+      Object.keys(r.perCourse).forEach(function (code) {
+        var x = demoBoard(db, code)[sid];
+        cur[code] = x ? Object.assign({ bestAtRaw: x.bestAt }, x) : null;
+      });
+      var plan = planSubmission(s, cur, r, sid + '_' + n, now);
+      s.attempts = n; s.lastPct = r.pct; s.lastExamId = r.examId;
+      if (r.pct > s.bestPct) { s.bestPct = r.pct; s.bestScore = r.score; s.bestTotal = r.total; s.bestAt = now; }
+      Object.assign(s, plan.studentFields);
+      Object.keys(plan.boards).forEach(function (code) { demoBoard(db, code)[sid] = plan.boards[code]; });
+      db.attempts[sid + '_' + n] = {
         sid: sid, name: s.name, matric: s.matric, score: r.score, total: r.total, pct: r.pct,
-        perCourse: r.perCourse, timeUsedSec: r.timeUsedSec, examId: r.examId, createdAt: Date.now()
+        perCourse: r.perCourse, timeUsedSec: r.timeUsedSec, examId: r.examId, createdAt: now
       };
       demoSave(db);
-      return delay({ student: Object.assign({}, s), improved: improved, previousBest: previousBest });
+      return delay({ student: Object.assign({}, s), improved: plan.improved, overallBefore: plan.overallBefore, overallAfter: plan.overallAfter });
     },
-    subscribeLeaderboard: function (cb) {
-      function push() {
-        var db = demoDb();
-        var all = Object.keys(db.students).map(function (k) { return db.students[k]; });
-        cb(sortBoard(all).slice(0, CFG.leaderboardSize || 100));
-      }
+    migrate: function (student) {
+      if (!student || !student.attempts || student.coursesTaken != null) return Promise.resolve(student);
+      var db = demoDb();
+      var list = Object.keys(db.attempts).filter(function (id) { return db.attempts[id].sid === student.sid; })
+        .map(function (id) { var a = db.attempts[id]; return { id: id, perCourse: a.perCourse, at: a.createdAt || 0 }; });
+      var m = planMigration(list);
+      var s = db.students[student.sid];
+      var now = Date.now();
+      Object.keys(m.per).forEach(function (code) {
+        var c = m.per[code];
+        demoBoard(db, code)[student.sid] = { name: s.name, matric: s.matric, bestPct: c.best.pct, bestScore: c.best.score, bestTotal: c.best.total, bestAt: now, attempts: c.attempts, src: c.best.src, updatedAt: now };
+      });
+      s.courseBest = m.courseBest; s.coursesTaken = Object.keys(m.courseBest).length;
+      if (m.overall !== null) { s.overallPct = m.overall; s.overallAt = now; }
+      demoSave(db);
+      return Promise.resolve(Object.assign({}, s));
+    },
+    subscribeBoard: function (board, cb) {
+      function push() { cb(sortEntries(demoEntries(demoDb(), board)).slice(0, LB_SIZE)); }
       function onStorage(e) { if (!e || e.key === DEMO_KEY) push(); }
       window.addEventListener('cbt-demo-change', push);
       window.addEventListener('storage', onStorage);
@@ -154,11 +262,10 @@
         window.removeEventListener('storage', onStorage);
       };
     },
-    getRank: function (student) {
-      var db = demoDb();
-      var board = sortBoard(Object.keys(db.students).map(function (k) { return db.students[k]; }));
-      var i = board.findIndex(function (s) { return s.sid === student.sid; });
-      return Promise.resolve({ rank: i >= 0 ? i + 1 : null, total: board.length });
+    getRank: function (student, board) {
+      var list = sortEntries(demoEntries(demoDb(), board));
+      var i = list.findIndex(function (s) { return s.sid === student.sid; });
+      return Promise.resolve({ rank: i >= 0 ? i + 1 : null, total: list.length });
     }
   };
 
@@ -166,14 +273,19 @@
    * FIREBASE STORE (Cloud Firestore)
    * ===================================================================== */
   var fs = null, db = null, initPromise = null;
+  function ms(v) { return v && typeof v.toMillis === 'function' ? v.toMillis() : (typeof v === 'number' ? v : 0); }
   function toStudent(id, d) {
     if (!d) return null;
-    var ts = function (v) { return v && typeof v.toMillis === 'function' ? v.toMillis() : (typeof v === 'number' ? v : Date.now()); };
     return {
       sid: id, name: d.name, matric: d.matric, hasPin: !!d.hasPin,
       attempts: d.attempts || 0, bestPct: d.bestPct || 0, bestScore: d.bestScore || 0, bestTotal: d.bestTotal || 0,
-      bestAt: ts(d.bestAt), lastPct: d.lastPct || 0, lastExamId: d.lastExamId || '', createdAt: ts(d.createdAt)
+      bestAt: ms(d.bestAt) || Date.now(), lastPct: d.lastPct || 0, lastExamId: d.lastExamId || '', createdAt: ms(d.createdAt) || Date.now(),
+      courseBest: d.courseBest || {}, coursesTaken: d.coursesTaken == null ? null : d.coursesTaken,
+      overallPct: d.overallPct == null ? null : d.overallPct, overallAt: ms(d.overallAt)
     };
+  }
+  function toBoardEntry(id, d) {
+    return { sid: id, name: d.name, matric: d.matric, pct: d.bestPct || 0, score: d.bestScore || 0, total: d.bestTotal || 0, at: ms(d.bestAt), attempts: d.attempts || 0 };
   }
   function mapFbError(e) {
     if (e && e.code && /^(exists|not-found|timeout|wrong-pin)$/.test(e.code)) return e;
@@ -230,14 +342,15 @@
         batch.set(ref, {
           name: o.name, matric: normMatric(o.matric), hasPin: !!o.pin,
           attempts: 0, bestPct: 0, bestScore: 0, bestTotal: 0, lastPct: 0, lastExamId: '',
-          bestAt: now, createdAt: now, updatedAt: now
+          bestAt: now, createdAt: now, updatedAt: now, courseBest: {}, coursesTaken: 0
         });
         if (o.pin) batch.set(fs.doc(db, 'students', sid, 'pin', pinHash(sid, o.pin)), { createdAt: now });
         return withTimeout(batch.commit());
       }).then(function () {
         return {
           sid: sid, name: o.name, matric: normMatric(o.matric), hasPin: !!o.pin, attempts: 0, bestPct: 0,
-          bestScore: 0, bestTotal: 0, bestAt: Date.now(), lastPct: 0, lastExamId: '', createdAt: Date.now()
+          bestScore: 0, bestTotal: 0, bestAt: Date.now(), lastPct: 0, lastExamId: '', createdAt: Date.now(),
+          courseBest: {}, coursesTaken: 0, overallPct: null, overallAt: 0
         };
       }).catch(function (e) {
         // If someone created the same matric at the same moment, the rules reject our write.
@@ -268,52 +381,93 @@
 
     submitAttempt: function (sid, r) {
       var ref = fs.doc(db, 'students', sid);
+      var codes = Object.keys(r.perCourse || {});
+      var boardRefs = codes.map(function (code) { return fs.doc(db, 'board_' + code, sid); });
       var out = null;
       return withTimeout(fs.runTransaction(db, function (tx) {
-        return tx.get(ref).then(function (snap) {
+        return Promise.all([tx.get(ref)].concat(boardRefs.map(function (b) { return tx.get(b); }))).then(function (snaps) {
+          var snap = snaps[0];
           if (!snap.exists()) throw err('not-found');
           var s = toStudent(snap.id, snap.data());
           if (s.lastExamId === r.examId) {
-            out = { student: s, improved: false, previousBest: s.bestPct, alreadySaved: true };
+            out = { student: s, improved: [], alreadySaved: true, overallBefore: s.overallPct, overallAfter: s.overallPct };
             return;
           }
           var n = s.attempts + 1;
-          var improved = r.pct > s.bestPct;
-          var upd = { attempts: n, lastPct: r.pct, lastExamId: r.examId, updatedAt: fs.serverTimestamp() };
-          if (improved) {
-            upd.bestPct = r.pct; upd.bestScore = r.score; upd.bestTotal = r.total; upd.bestAt = fs.serverTimestamp();
-          }
-          tx.update(ref, upd);
-          tx.set(fs.doc(db, 'attempts', sid + '_' + n), {
-            sid: sid, name: s.name, matric: s.matric, score: r.score, total: r.total, pct: r.pct,
-            perCourse: r.perCourse, timeUsedSec: r.timeUsedSec, examId: r.examId, createdAt: fs.serverTimestamp()
+          var attemptId = sid + '_' + n;
+          var cur = {};
+          codes.forEach(function (code, i) {
+            var bs = snaps[i + 1];
+            if (bs.exists()) { var d = bs.data(); cur[code] = Object.assign({}, d, { bestAtRaw: d.bestAt }); } else cur[code] = null;
           });
-          var ns = Object.assign({}, s, { attempts: n, lastPct: r.pct, lastExamId: r.examId });
-          if (improved) Object.assign(ns, { bestPct: r.pct, bestScore: r.score, bestTotal: r.total, bestAt: Date.now() });
-          out = { student: ns, improved: improved, previousBest: s.bestPct };
+          var now = fs.serverTimestamp();
+          var plan = planSubmission(s, cur, r, attemptId, now);
+          var upd = Object.assign({ attempts: n, lastPct: r.pct, lastExamId: r.examId, updatedAt: now }, plan.studentFields);
+          if (r.pct > s.bestPct) { upd.bestPct = r.pct; upd.bestScore = r.score; upd.bestTotal = r.total; upd.bestAt = now; }
+          tx.update(ref, upd);
+          tx.set(fs.doc(db, 'attempts', attemptId), {
+            sid: sid, name: s.name, matric: s.matric, score: r.score, total: r.total, pct: r.pct,
+            perCourse: r.perCourse, timeUsedSec: r.timeUsedSec, examId: r.examId, createdAt: now
+          });
+          codes.forEach(function (code, i) { tx.set(boardRefs[i], plan.boards[code]); });
+          var ns = Object.assign({}, s, { attempts: n, lastPct: r.pct, lastExamId: r.examId }, plan.studentFields);
+          if (r.pct > s.bestPct) Object.assign(ns, { bestPct: r.pct, bestScore: r.score, bestTotal: r.total, bestAt: Date.now() });
+          if (ns.overallAt && typeof ns.overallAt !== 'number') ns.overallAt = Date.now();
+          out = { student: ns, improved: plan.improved, overallBefore: plan.overallBefore, overallAfter: plan.overallAfter };
         });
       }), 30000).then(function () { return out; }).catch(function (e) { throw mapFbError(e); });
     },
 
-    subscribeLeaderboard: function (cb, onError) {
-      var q = fs.query(fs.collection(db, 'students'), fs.orderBy('bestPct', 'desc'), fs.limit(CFG.leaderboardSize || 100));
+    // One-time upgrade for accounts made before course leaderboards existed.
+    migrate: function (student) {
+      if (!student || !student.attempts || student.coursesTaken != null) return Promise.resolve(student);
+      var sid = student.sid;
+      return withTimeout(fs.getDocs(fs.query(fs.collection(db, 'attempts'), fs.where('sid', '==', sid)))).then(function (qs) {
+        var list = [];
+        qs.forEach(function (d) { var a = d.data(); list.push({ id: d.id, perCourse: a.perCourse, at: ms(a.createdAt) }); });
+        var m = planMigration(list);
+        var now = fs.serverTimestamp();
+        var batch = fs.writeBatch(db);
+        Object.keys(m.per).forEach(function (code) {
+          var c = m.per[code];
+          batch.set(fs.doc(db, 'board_' + code, sid), {
+            name: student.name, matric: student.matric, bestPct: c.best.pct, bestScore: c.best.score, bestTotal: c.best.total,
+            bestAt: now, attempts: c.attempts, src: c.best.src, updatedAt: now
+          });
+        });
+        var upd = { courseBest: m.courseBest, coursesTaken: Object.keys(m.courseBest).length, updatedAt: now };
+        if (m.overall !== null) { upd.overallPct = m.overall; upd.overallAt = now; }
+        batch.update(fs.doc(db, 'students', sid), upd);
+        return withTimeout(batch.commit()).then(function () {
+          return Object.assign({}, student, { courseBest: m.courseBest, coursesTaken: upd.coursesTaken, overallPct: m.overall, overallAt: m.overall !== null ? Date.now() : 0 });
+        });
+      }).catch(function (e) { console.warn('Upgrade of old scores failed', e); return student; });
+    },
+
+    subscribeBoard: function (board, cb, onError) {
+      var q = board === 'overall'
+        ? fs.query(fs.collection(db, 'students'), fs.orderBy('overallPct', 'desc'), fs.limit(LB_SIZE))
+        : fs.query(fs.collection(db, 'board_' + board), fs.orderBy('bestPct', 'desc'), fs.limit(LB_SIZE));
       return fs.onSnapshot(q, function (snap) {
         var list = [];
-        snap.forEach(function (d) { list.push(toStudent(d.id, d.data())); });
-        cb(sortBoard(list));
+        snap.forEach(function (d) { list.push(board === 'overall' ? entryFromStudent(toStudent(d.id, d.data())) : toBoardEntry(d.id, d.data())); });
+        cb(sortEntries(list));
       }, function (e) { if (onError) onError(mapFbError(e)); });
     },
 
-    // Two count queries: cheap (about 1 read per 1000 students each).
-    getRank: function (student) {
-      var col = fs.collection(db, 'students');
-      var totalQ = fs.getCountFromServer(fs.query(col, fs.where('attempts', '>', 0)));
-      if (!student || !student.attempts) {
+    // Count queries are cheap: about 1 read per 1000 records.
+    getRank: function (student, board) {
+      var overall = board === 'overall';
+      var col = overall ? fs.collection(db, 'students') : fs.collection(db, 'board_' + board);
+      var field = overall ? 'overallPct' : 'bestPct';
+      var mine = overall ? student.overallPct : (student.courseBest || {})[board];
+      var totalQ = fs.getCountFromServer(overall ? fs.query(col, fs.where('overallPct', '>=', 0)) : col);
+      if (mine == null) {
         return withTimeout(totalQ).then(function (t) { return { rank: null, total: t.data().count }; }).catch(function (e) { throw mapFbError(e); });
       }
-      var aheadQ = fs.getCountFromServer(fs.query(col, fs.where('bestPct', '>', student.bestPct)));
-      return withTimeout(Promise.all([aheadQ, totalQ])).then(function (r) {
-        return { rank: r[0].data().count + 1, total: r[1].data().count };
+      var aheadQ = fs.getCountFromServer(fs.query(col, fs.where(field, '>', mine)));
+      return withTimeout(Promise.all([aheadQ, totalQ])).then(function (res) {
+        return { rank: res[0].data().count + 1, total: res[1].data().count };
       }).catch(function (e) { throw mapFbError(e); });
     }
   };
@@ -322,5 +476,8 @@
   var store = useFirebase ? FirebaseStore : DemoStore;
   store.LS = LS;
   store.pinHash = pinHash;
+  store.planMigration = planMigration;
+  store.overallOf = overallOf;
+  store.MIN_OVERALL = MIN_OVERALL;
   window.CBTStore = store;
 })();

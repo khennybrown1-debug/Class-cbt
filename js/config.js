@@ -31,8 +31,9 @@ window.CBT_CONFIG = {
    * ------------------------------------------------------------------- */
   siteName: "CBT Practice Arena",       // shown at the top of every page
   className: "100 Level",               // shown under the site name
-  questionsPerCourse: 45,               // questions per course in each exam (45 x 4 = 180, like JAMB)
-  examMinutes: 120,                     // total time for ALL courses together
+  questionsPerCourse: 45,               // questions per course in each exam
+  minutesPerCourse: 30,                 // time per course: 1 course = 30 min, 4 courses = 120 min
+  overallMinCourses: 4,                 // courses needed before a student appears on the Overall leaderboard
   warnAtMinutes: 10,                    // timer turns amber and shows a warning
   dangerAtMinutes: 5,                   // timer turns red and blinks
 
@@ -42,7 +43,8 @@ window.CBT_CONFIG = {
     { code: "GNS", title: "Use of English" },
     { code: "PHC", title: "Primary Health Care" },
     { code: "CHM", title: "General Chemistry" },
-    { code: "AUM", title: "Action and Use of Medicine" }
+    { code: "AUM", title: "Action and Use of Medicine" },
+    { code: "PHY", title: "Physics" }
   ],
 
   /* -------------------------------------------------------------------

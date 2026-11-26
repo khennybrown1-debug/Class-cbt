@@ -2,9 +2,10 @@
 
 A JAMB style CBT practice website for a 100 level class. Everyone opens the same link on their phone, writes practice tests and sees **one shared live leaderboard**.
 
-- 4 courses: Use of English (GNS), Primary Health Care (PHC), General Chemistry (CHM), Action and Use of Medicine (AUM)
-- 1,260 questions (GNS 332, PHC 303, CHM 311, AUM 314), each with an explanation
-- Every exam: 45 random questions per course (180 in total), 120 minutes
+- 5 courses: Use of English (GNS), Primary Health Care (PHC), General Chemistry (CHM), Action and Use of Medicine (AUM) and Physics (PHY)
+- 1,358 questions (GNS 332, PHC 303, CHM 311, AUM 314, PHY 98), each with an explanation. Physics comes word for word from the class PHY 111 question file.
+- Students choose the courses for each exam: one, several or all. 45 questions and 30 minutes per course.
+- Leaderboards: one per course, plus an Overall leaderboard (average of best course scores, after 4 courses)
 - A student never sees the same question again until they have gone through the whole bank for that course
 - Live class leaderboard (Firebase), corrections with explanations, works on any phone
 
@@ -150,13 +151,14 @@ All settings are in the settings block (`js/config.js`, or at the top of `single
 |---|---|---|
 | `siteName` | Name at the top of the site | `CBT Practice Arena` |
 | `className` | Text under the name | `100 Level` |
-| `questionsPerCourse` | Questions per course in each exam | `45` (45 x 4 = 180) |
-| `examMinutes` | Total time for all courses together | `120` |
+| `questionsPerCourse` | Questions per course in each exam | `45` |
+| `minutesPerCourse` | Time per chosen course (1 course = 30 min, 4 courses = 120 min) | `30` |
+| `overallMinCourses` | Courses a student must take before appearing on the Overall leaderboard | `4` |
 | `warnAtMinutes` | Timer turns amber with a warning | `10` |
 | `dangerAtMinutes` | Timer turns red and blinks | `5` |
 | `requirePin` | `true` = students choose a 4 digit PIN at sign up and need it to log in | `false` |
 | `leaderboardSize` | How many students the live leaderboard shows | `100` |
-| `courses` | The course tabs and their order | GNS, PHC, CHM, AUM |
+| `courses` | The courses students can choose, in order | GNS, PHC, CHM, AUM, PHY |
 
 **About the PIN:** decide before you share the link. With `requirePin: false`, anyone who knows a matric number can log in as that student. With `requirePin: true`, they also need the PIN. Accounts created while the PIN was off have no PIN and can still log in with the matric number only.
 
@@ -187,7 +189,9 @@ On a computer you can check all the files with `node tools/validate-questions.js
 - **No repeats.** The IDs of the questions a student has seen are saved in Firebase (and on the phone as a backup). New exams only use questions they have not seen. When they have seen the whole bank for a course, it starts a fresh round.
 - **Refresh safe.** Answers and the timer are saved on the phone during the exam, so a refresh or a closed tab does not lose anything. When time runs out, the exam is submitted automatically.
 - **Offline submit.** If the internet drops at the moment of submitting, the score is kept on the phone and sent to the leaderboard automatically the next time the site is opened with internet.
-- **Leaderboard ranking.** By best percentage. If two students tie, the one who reached that score first ranks higher.
+- **Choosing courses.** When a student taps Start exam, they tick the courses they want. Each course adds 45 questions and 30 minutes.
+- **Leaderboards.** Each course has its own leaderboard, ranked by each student's best score in that course. The Overall leaderboard ranks the average of a student's best course scores, and only includes students who have taken at least 4 courses (so nobody tops it by taking only their easiest course). Ties: whoever reached the score first ranks higher.
+- **Physics.** The 98 Physics questions are copied exactly from the PHY 111 file (2 word-for-word repeats in the file were kept only once). Because the bank is smaller, Physics questions start repeating after about 2 exams, once a student has seen them all.
 
 ## Will it stay free?
 

@@ -24,9 +24,12 @@
     b.questions.forEach(function (q) { QMAP[q.id] = q; });
   });
   var PER_COURSE = Math.max(1, parseInt(CFG.questionsPerCourse, 10) || 45);
-  var EXAM_MIN = parseFloat(CFG.examMinutes) > 0 ? parseFloat(CFG.examMinutes) : 120;
+  // Time is given per course: picking 1 course gives 30 minutes, 4 courses give 120 minutes.
+  var MIN_PER_COURSE = parseFloat(CFG.minutesPerCourse) > 0 ? parseFloat(CFG.minutesPerCourse) : 30;
+  var MIN_OVERALL = Store.MIN_OVERALL || 4;
   function perCourseFor(code) { return Math.min(PER_COURSE, (BANKS[code] || []).length); }
-  var TOTAL_Q = COURSES.reduce(function (n, c) { return n + perCourseFor(c.code); }, 0);
+  function courseTitle(code) { var c = COURSES.filter(function (x) { return x.code === code; })[0]; return c ? c.title : code; }
+  function examSize(ex) { return ex.sections.reduce(function (n, s) { return n + s.items.length; }, 0); }
   var LETTERS = ['A', 'B', 'C', 'D'];
 
   /* ---------- state ---------- */
@@ -40,7 +43,9 @@
     lb: null,
     lbError: null,
     lbUnsub: null,
-    rankInfo: null,
+    rankInfo: null,       // my position on the board being shown
+    overallRank: null,    // my position on the Overall board (stats card and medals)
+    board: 'overall',     // leaderboard tab: 'overall' or a course code
     seen: null,
     result: null,
     corr: { course: 0, filter: 'all' },
@@ -232,7 +237,9 @@
   }
 
   function afterLogin() {
-    return retryPending().then(function () {
+    // Older accounts get their course bests rebuilt once from their past exams.
+    var upgrade = Store.migrate ? Store.migrate(state.student).then(function (st) { if (st) setStudent(st); }, function () {}) : Promise.resolve();
+    return upgrade.then(retryPending).then(function () {
       // If the question files changed (e.g. a question was removed or a course renamed),
       // an unfinished exam or an old result may point to questions that no longer exist.
       var known = function (o) {
@@ -266,7 +273,10 @@
       LS.del(k('pending'));
       setStudent(r.student);
       var last = LS.get(k('result'), null);
-      if (last && last.examId === p.examId) { last.synced = true; last.improved = r.improved; LS.set(k('result'), last); }
+      if (last && last.examId === p.examId) {
+        last.synced = true; last.improved = r.improved || []; last.overallBefore = r.overallBefore; last.overallAfter = r.overallAfter;
+        LS.set(k('result'), last);
+      }
       toast('Your last score has been added to the leaderboard.', 'success');
     }, function (e) { console.warn('Pending result not sent yet', e); });
   }
@@ -402,7 +412,7 @@
           stopTimer();
           stopLeaderboard();
           LS.del(SESSION_KEY);
-          state.student = null; state.exam = null; state.result = null; state.rankInfo = null; state.seen = null; state.lb = null;
+          state.student = null; state.exam = null; state.result = null; state.rankInfo = null; state.overallRank = null; state.seen = null; state.lb = null; state.board = 'overall';
           showAuth('login');
         } }
       ]
@@ -451,14 +461,15 @@
       '<div class="mt-5 flex flex-col sm:flex-row gap-3 sm:items-center">' + examBtn +
       (last ? '<button type="button" class="btn btn-outline-light w-full sm:w-auto" data-action="last-result">View last result</button>' : '') +
       '</div>' +
-      '<p class="mt-3 text-xs text-blue-100">' + COURSES.length + ' courses, ' + TOTAL_Q + ' questions, ' + EXAM_MIN + ' minutes. New questions every time.</p>' +
+      '<p class="mt-3 text-xs text-blue-100">Choose one course, several or all ' + COURSES.length + '. ' + PER_COURSE + ' questions and ' + MIN_PER_COURSE + ' minutes per course. New questions every time.</p>' +
       '</section>' +
       '</div>' +
       // Leaderboard
       '<section class="card p-5 lg:row-span-2 min-w-0" id="lb-card">' +
       '<div class="flex items-center gap-2"><span class="text-blue-700">' + ICON.trophy + '</span><h2 class="section-title">Class leaderboard</h2>' +
       '<span id="lb-status" class="ml-auto">' + lbStatusHtml() + '</span></div>' +
-      '<p class="text-xs text-slate-500 mt-1">Ranked by best score. If two students tie, the one who got it first ranks higher.</p>' +
+      '<nav id="lb-tabs" class="mt-3 flex flex-wrap gap-1.5">' + boardTabsHtml() + '</nav>' +
+      '<p id="lb-note" class="text-xs text-slate-500 mt-2">' + boardNote() + '</p>' +
       '<div id="lb" class="mt-4">' + leaderboardHtml() + '</div></section>' +
       '<div class="space-y-5 min-w-0">' +
       // Seen progress
@@ -467,14 +478,15 @@
       '<div id="seen" class="mt-4 space-y-4">' + seenHtml() + '</div></section>' +
       // Instructions
       '<section class="card p-5"><h2 class="section-title">Exam instructions</h2><ol class="mt-3 space-y-2 text-sm text-slate-600 list-decimal pl-5">' +
-      '<li>The exam has <b>' + COURSES.length + ' courses</b> with <b>' + PER_COURSE + ' questions each</b> (' + TOTAL_Q + ' in total).</li>' +
-      '<li>You have <b>' + EXAM_MIN + ' minutes</b> for all courses together. The timer is always at the top.</li>' +
+      '<li>Tap <b>Start exam</b> and choose the courses you want: one, several or all of them.</li>' +
+      '<li>Each course has <b>' + PER_COURSE + ' questions</b> and adds <b>' + MIN_PER_COURSE + ' minutes</b> to your timer. The timer is always at the top.</li>' +
       '<li>Use the course tabs to switch courses. Each course is marked separately.</li>' +
       '<li>Questions come one at a time. Use <b>Previous</b> and <b>Next</b>, or tap a number in the question map to jump.</li>' +
       '<li>Answered questions turn <span class="text-blue-700 font-bold">blue</span> in the map. Unanswered ones stay white.</li>' +
       '<li>On a keyboard: press <b>A, B, C, D</b> to answer, <b>N</b> for next and <b>P</b> for previous.</li>' +
       '<li>If you refresh or close the page, your answers and timer are kept. When time runs out, your answers are submitted automatically.</li>' +
       '<li>After submitting, you get your score, corrections with explanations and your position on the leaderboard.</li>' +
+      '<li>Each course has its own leaderboard. The <b>Overall</b> leaderboard uses the average of your best course scores once you have taken at least ' + MIN_OVERALL + ' courses.</li>' +
       '</ol></section>' +
       // Courses
       '<section class="card p-5"><h2 class="section-title">Courses</h2><div class="mt-3 divide-y divide-blue-50">' +
@@ -489,16 +501,18 @@
   function statsHtml() {
     var st = state.student;
     var ri = state.rankInfo;
+    ri = state.overallRank;
+    var taken = Object.keys(st.courseBest || {}).length;
     var rank = '<span class="text-blue-200">-</span>';
-    var rankSub = st.attempts ? 'loading' : 'no attempts yet';
-    if (ri && ri.rank) { rank = '#' + ri.rank; rankSub = 'of ' + Math.max(ri.total || 0, ri.rank) + ' students'; }
-    else if (ri && !st.attempts) { rankSub = 'take a test'; }
+    var rankSub = !st.attempts ? 'no attempts yet' : st.overallPct == null ? taken + '/' + MIN_OVERALL + ' courses' : 'loading';
+    if (ri && ri.rank && st.overallPct != null) { rank = '#' + ri.rank; rankSub = 'of ' + Math.max(ri.total || 0, ri.rank) + ' overall'; }
     var tile = function (label, value, sub) {
       return '<div class="rounded-2xl bg-white/10 ring-1 ring-white/20 px-3 py-3"><div class="text-[11px] uppercase tracking-wider text-blue-100 font-bold">' + label +
         '</div><div class="text-xl sm:text-2xl font-extrabold mt-0.5">' + value + '</div><div class="text-[11px] text-blue-100 truncate">' + sub + '</div></div>';
     };
     return tile('Rank', rank, rankSub) +
-      tile('Best score', st.attempts ? pct(st.bestPct) : '<span class="text-blue-200">-</span>', st.attempts ? st.bestScore + '/' + st.bestTotal : 'no attempts yet') +
+      tile('Overall', st.overallPct != null ? pct(st.overallPct) : '<span class="text-blue-200">-</span>',
+        st.overallPct != null ? 'average of ' + taken + ' courses' : Math.max(0, MIN_OVERALL - taken) + ' more to join') +
       tile('Attempts', String(st.attempts || 0), st.attempts ? 'last: ' + pct(st.lastPct) : 'start now');
   }
   function renderStats() { var el = document.getElementById('stats'); if (el) el.innerHTML = statsHtml(); }
@@ -511,6 +525,7 @@
       var w = Math.min(100, Math.round(valid / c.count * 100));
       return '<div><div class="flex items-baseline justify-between gap-2 text-sm"><span class="font-bold text-slate-800">' + esc(c.code) +
         ' <span class="font-medium text-slate-500">' + esc(c.title) + '</span></span><span class="text-slate-600 whitespace-nowrap"><b class="text-blue-900">' + valid + '</b> of ' + c.count + ' seen</span></div>' +
+        ((state.student.courseBest || {})[c.code] != null ? '<div class="text-[11px] font-semibold text-blue-700">Your best: ' + pct(state.student.courseBest[c.code]) + '</div>' : '') +
         '<div class="bar mt-1.5"><div class="bar-fill" style="width:' + w + '%"></div></div>' +
         (s.cycle ? '<div class="text-[11px] text-blue-700 font-semibold mt-1">Round ' + (s.cycle + 1) + ': you have finished the whole bank ' + s.cycle + (s.cycle === 1 ? ' time' : ' times') + '</div>' : '') +
         '</div>';
@@ -526,13 +541,31 @@
     return '<span class="status-pill bg-green-50 text-green-700"><span class="dot dot-live bg-green-500"></span>Live</span>';
   }
 
+  function boardTabsHtml() {
+    return ['overall'].concat(COURSES.map(function (c) { return c.code; })).map(function (b) {
+      var on = state.board === b;
+      return '<button type="button" class="fchip ' + (on ? 'fchip-on' : '') + '" data-action="board-tab" data-board="' + b + '">' + (b === 'overall' ? 'Overall' : esc(b)) + '</button>';
+    }).join('');
+  }
+  function boardNote() {
+    if (state.board === 'overall') return 'Average of each student\'s best course scores. You join after taking ' + MIN_OVERALL + ' courses. Ties: whoever got there first.';
+    return courseTitle(state.board) + ': ranked by best score in this course. Ties: whoever got there first.';
+  }
+  function myPct(board) {
+    var me = state.student;
+    return board === 'overall' ? me.overallPct : (me.courseBest || {})[board];
+  }
+
   function leaderboardHtml() {
     if (state.lbError) return '<p class="text-sm text-red-700 bg-red-50 rounded-xl p-4">' + esc(friendlyError(state.lbError)) + '</p>';
     if (!state.lb) return '<div class="space-y-3">' + [0, 1, 2, 3].map(function () { return '<div class="skeleton h-12"></div>'; }).join('') + '</div>';
+    var overall = state.board === 'overall';
     var list = boardWithMe(state.lb);
     var me = state.student;
+    var detail = function (s) { return overall ? (s.courses || 0) + ' courses' : s.score + '/' + s.total; };
     if (!list.length) return '<div class="text-center py-10"><div class="mx-auto w-12 h-12 rounded-full bg-blue-50 text-blue-700 flex items-center justify-center">' + ICON.trophy + '</div>' +
-      '<p class="mt-3 font-bold text-blue-900">No scores yet</p><p class="text-sm text-slate-500">Be the first to take the exam and lead the class!</p></div>';
+      '<p class="mt-3 font-bold text-blue-900">No scores yet</p><p class="text-sm text-slate-500">' +
+      (overall ? 'Take at least ' + MIN_OVERALL + ' courses to appear here.' : 'Be the first to take ' + esc(state.board) + ' and lead the class!') + '</p></div>';
 
     var podiumOrder = [1, 0, 2].filter(function (i) { return list[i]; });
     var medal = ['gold', 'silver', 'bronze'];
@@ -543,8 +576,8 @@
         '<div class="podium-avatar">' + esc(initials(s.name)) + '<span class="podium-rank">' + (i + 1) + '</span></div>' +
         '<div class="podium-name" title="' + esc(s.name) + '">' + esc(s.name) + (mine ? ' <span class="you-tag">You</span>' : '') + '</div>' +
         '<div class="podium-matric">' + esc(s.matric) + '</div>' +
-        '<div class="podium-pct">' + pct(s.bestPct) + '</div>' +
-        '<div class="podium-score">' + s.bestScore + '/' + s.bestTotal + '</div>' +
+        '<div class="podium-pct">' + pct(s.pct) + '</div>' +
+        '<div class="podium-score">' + detail(s) + '</div>' +
         '<div class="podium-block">' + (i + 1) + '</div></div>';
     }).join('') + '</div>';
 
@@ -554,30 +587,38 @@
         '<span class="lb-pos">' + pos + '</span>' + avatar(s.name, 'w-9 h-9 text-xs shrink-0') +
         '<div class="min-w-0 flex-1"><div class="font-bold text-slate-800 truncate text-sm">' + esc(s.name) + (mine ? ' <span class="you-tag">You</span>' : '') + '</div>' +
         '<div class="text-[11px] text-slate-500 truncate">' + esc(s.matric) + ' &middot; ' + s.attempts + (s.attempts === 1 ? ' attempt' : ' attempts') + '</div></div>' +
-        '<div class="text-right shrink-0"><div class="font-extrabold text-blue-900 text-sm">' + pct(s.bestPct) + '</div><div class="text-[11px] text-slate-500">' + s.bestScore + '/' + s.bestTotal + '</div></div></li>';
+        '<div class="text-right shrink-0"><div class="font-extrabold text-blue-900 text-sm">' + pct(s.pct) + '</div><div class="text-[11px] text-slate-500">' + detail(s) + '</div></div></li>';
     }).join('');
 
     var inList = list.some(function (s) { return s.sid === me.sid; });
     var mine = '';
     if (!inList) {
-      var ri = state.rankInfo;
-      if (!me.attempts) mine = 'Take your first exam to join the leaderboard.';
-      else if (ri && ri.rank) mine = 'Your position: <b>#' + ri.rank + '</b> of ' + Math.max(ri.total, ri.rank) + ' with <b>' + pct(me.bestPct) + '</b>';
-      else mine = 'Your best: <b>' + pct(me.bestPct) + '</b>. Working out your position...';
+      var ri = state.rankInfo, mp = myPct(state.board);
+      if (mp == null) {
+        mine = overall ? 'You join the Overall leaderboard after taking ' + MIN_OVERALL + ' courses (' + Object.keys(me.courseBest || {}).length + ' so far).'
+          : 'Take ' + esc(state.board) + ' in an exam to join this leaderboard.';
+      } else if (ri && ri.rank) mine = 'Your position: <b>#' + ri.rank + '</b> of ' + Math.max(ri.total, ri.rank) + ' with <b>' + pct(mp) + '</b>';
+      else mine = 'Your best: <b>' + pct(mp) + '</b>. Working out your position...';
       mine = '<div class="mt-4 rounded-2xl bg-blue-50 ring-1 ring-blue-200 text-blue-900 text-sm px-4 py-3 text-center">' + mine + '</div>';
     }
     return podium + (rows ? '<ol class="mt-4 space-y-2">' + rows + '</ol>' : '') + mine;
   }
 
-  /* Put my own latest record into the list straight away, so a new score
+  /* Put my own latest score into the list straight away, so a new best
    * shows immediately even before the next live update arrives. */
   function boardWithMe(list) {
     var me = state.student;
-    if (!me || !me.attempts) return list;
-    var mine = list.filter(function (s) { return s.sid === me.sid; })[0];
-    if (mine && mine.attempts >= me.attempts) return list;
-    var out = list.filter(function (s) { return s.sid !== me.sid; }).concat([me]);
-    out.sort(function (a, b) { return (b.bestPct - a.bestPct) || ((a.bestAt || 0) - (b.bestAt || 0)) || a.name.localeCompare(b.name); });
+    var mp = myPct(state.board);
+    if (!me || mp == null) return list;
+    var cur = list.filter(function (s) { return s.sid === me.sid; })[0];
+    if (cur && cur.pct >= mp) return list;
+    // Only add myself if I really belong inside the loaded list (it holds just the top students).
+    var size = CFG.leaderboardSize || 100;
+    if (!cur && list.length >= size && mp < list[list.length - 1].pct) return list;
+    var mineEntry = Object.assign({ score: '', total: '', attempts: me.attempts, at: Date.now() }, cur || {},
+      { sid: me.sid, name: me.name, matric: me.matric, pct: mp, courses: Object.keys(me.courseBest || {}).length });
+    var out = list.filter(function (s) { return s.sid !== me.sid; }).concat([mineEntry]);
+    out.sort(function (a, b) { return (b.pct - a.pct) || ((a.at || 0) - (b.at || 0)) || String(a.name).localeCompare(String(b.name)); });
     return out.slice(0, Math.max(list.length, CFG.leaderboardSize || 100));
   }
 
@@ -586,28 +627,28 @@
     if (el) el.innerHTML = leaderboardHtml();
     var st = document.getElementById('lb-status');
     if (st) st.innerHTML = lbStatusHtml();
+    var tabs = document.getElementById('lb-tabs');
+    if (tabs) tabs.innerHTML = boardTabsHtml();
+    var note = document.getElementById('lb-note');
+    if (note) note.textContent = boardNote();
   }
 
   function startLeaderboard() {
     stopLeaderboard();
     state.lbError = null;
+    var board = state.board;
     try {
-      state.lbUnsub = Store.subscribeLeaderboard(function (list) {
+      state.lbUnsub = Store.subscribeBoard(board, function (list) {
+        if (board !== state.board) return;
         state.lb = list;
         state.lbError = null;
-        // Keep my own record fresh if the leaderboard has a newer copy.
-        var mineFromList = list.filter(function (s) { return s.sid === state.student.sid; })[0];
-        if (mineFromList && mineFromList.attempts >= state.student.attempts) {
-          state.student = Object.assign({}, state.student, mineFromList);
-          LS.set('cbt_student_' + state.student.sid, state.student);
-        }
         var idx = boardWithMe(list).findIndex(function (s) { return s.sid === state.student.sid; });
         if (idx >= 0) {
           state.rankInfo = { rank: idx + 1, total: Math.max((state.rankInfo && state.rankInfo.total) || 0, list.length) };
+          if (board === 'overall') { state.overallRank = state.rankInfo; maybeMedal(idx + 1); }
         }
         renderLeaderboard();
         renderStats();
-        if (state.rankInfo) maybeMedal(state.rankInfo.rank);
       }, function (e) {
         state.lbError = e;
         renderLeaderboard();
@@ -619,15 +660,32 @@
     state.lbUnsub = null;
   }
 
+  function switchBoard(b) {
+    if (b === state.board) return;
+    state.board = b;
+    state.lb = null;
+    state.rankInfo = b === 'overall' ? state.overallRank : null;
+    renderLeaderboard();
+    startLeaderboard();
+    refreshRank();
+  }
+
   function refreshRank() {
     var me = state.student;
-    return Store.getRank(me).then(function (ri) {
-      // Prefer the exact position from the live list when I am in it.
-      var idx = (state.lb || []).findIndex(function (s) { return s.sid === me.sid; });
+    var board = state.board;
+    var jobs = [Store.getRank(me, board).then(function (ri) {
+      if (board !== state.board) return;
+      var idx = state.lb ? boardWithMe(state.lb).findIndex(function (s) { return s.sid === me.sid; }) : -1;
       if (idx >= 0) ri.rank = idx + 1;
       state.rankInfo = ri;
-      if (state.view === 'dashboard') { renderStats(); renderLeaderboard(); maybeMedal(ri.rank); }
-      return ri;
+      if (board === 'overall') state.overallRank = ri;
+    })];
+    if (board !== 'overall') jobs.push(Store.getRank(me, 'overall').then(function (ri) { state.overallRank = ri; }));
+    return Promise.all(jobs).then(function () {
+      if (state.view === 'dashboard') {
+        renderStats(); renderLeaderboard();
+        if (state.overallRank && me.overallPct != null) maybeMedal(state.overallRank.rank);
+      }
     }).catch(function (e) { console.warn('rank', e); return null; });
   }
 
@@ -646,7 +704,7 @@
   /* Shows once per visit for each new position (1st, 2nd or 3rd). */
   function maybeMedal(rank) {
     var me = state.student;
-    if (!me || !me.attempts || !rank || rank > 3) return;
+    if (!me || !me.attempts || me.overallPct == null || !rank || rank > 3) return;
     if (state.view !== 'dashboard' && state.view !== 'result') return;
     if (state.modalOpen) return;
     var sKey = 'cbt_medal_' + me.sid;
@@ -664,7 +722,7 @@
       top: '<div class="medal-wrap">' + confetti +
         '<div class="medal medal-' + m.name + '"><span class="medal-ribbon"></span><span class="medal-disc">' + rank + '</span></div></div>',
       body: '<p class="text-base font-semibold text-slate-700">Congratulations, ' + esc(firstName(me.name)) + '! ' + esc(pick(m.msg)) + '</p>' +
-        '<p class="mt-2">Best score: <b>' + pct(me.bestPct) + '</b> (' + me.bestScore + '/' + me.bestTotal + ')</p>',
+        '<p class="mt-2">Overall average: <b>' + pct(me.overallPct) + '</b> across ' + Object.keys(me.courseBest || {}).length + ' courses</p>',
       actions: [{ label: 'Thank you!', primary: true }]
     });
   }
@@ -672,25 +730,77 @@
   /* =====================================================================
    *  EXAM
    * ===================================================================== */
+  /* Course picker: one course, several or all. The choice is remembered. */
   function confirmStart() {
+    var all = COURSES.map(function (c) { return c.code; });
+    var saved = LS.get(k('pick'), null);
+    var pickSet = {};
+    (Array.isArray(saved) && saved.length ? saved : all).forEach(function (c) { if (BANKS[c]) pickSet[c] = true; });
+    function chosen() { return all.filter(function (c) { return pickSet[c]; }); }
+    function summary() {
+      var n = chosen().length;
+      var q = chosen().reduce(function (s, c) { return s + perCourseFor(c); }, 0);
+      return n ? '<b>' + n + (n === 1 ? ' course' : ' courses') + '</b>, ' + q + ' questions, <b>' + (n * MIN_PER_COURSE) + ' minutes</b>' : 'Choose at least one course.';
+    }
+    function listHtml() {
+      return COURSES.map(function (c) {
+        var on = !!pickSet[c.code];
+        return '<button type="button" class="pick-row' + (on ? ' pick-on' : '') + '" data-pick="' + c.code + '" role="checkbox" aria-checked="' + on + '">' +
+          '<span class="pick-box">' + (on ? ICON.check : '') + '</span>' +
+          '<span class="course-badge course-badge-sm">' + esc(c.code) + '</span>' +
+          '<span class="flex-1 min-w-0 text-left"><span class="block font-bold text-slate-800 text-sm">' + esc(c.title) + '</span>' +
+          '<span class="block text-[11px] text-slate-500">' + perCourseFor(c.code) + ' questions, ' + MIN_PER_COURSE + ' minutes</span></span></button>';
+      }).join('');
+    }
     openModal({
-      title: 'Ready to start?',
-      body: '<p>You will get <b>' + TOTAL_Q + ' questions</b> from <b>' + COURSES.length + ' courses</b> and <b>' + EXAM_MIN + ' minutes</b>. The timer starts as soon as you tap Start.</p>' +
-        '<p class="mt-2">Find a quiet place and good luck!</p>',
-      actions: [{ label: 'Not yet' }, { label: 'Start now', primary: true, onClick: function (b) { startExam(b); } }]
+      title: 'Choose your courses',
+      body: '<div class="flex items-center justify-between"><span class="text-xs text-slate-500">Tap to tick or untick.</span>' +
+        '<button type="button" class="link text-sm" data-pick-all>Select all</button></div>' +
+        '<div id="pick-list" class="mt-3 space-y-2">' + listHtml() + '</div>' +
+        '<p id="pick-sum" class="mt-4 text-sm text-slate-700">' + summary() + '</p>' +
+        '<p class="mt-1 text-xs text-slate-500">The timer starts as soon as you tap Start now.</p>',
+      actions: [{ label: 'Not yet' }, { label: 'Start now', primary: true, onClick: function (b) {
+        var codes = chosen();
+        if (!codes.length) { toast('Choose at least one course.', 'warn'); return; }
+        LS.set(k('pick'), codes);
+        startExam(b, codes);
+      } }]
     });
+    var root = document.getElementById('modal-root');
+    function refresh() {
+      document.getElementById('pick-list').innerHTML = listHtml();
+      document.getElementById('pick-sum').innerHTML = summary();
+      var start = root.querySelector('.btn-primary');
+      if (start) start.disabled = !chosen().length;
+      var allBtn = root.querySelector('[data-pick-all]');
+      if (allBtn) allBtn.textContent = chosen().length === all.length ? 'Clear all' : 'Select all';
+    }
+    root.querySelector('.modal-panel').addEventListener('click', function (e) {
+      var row = e.target.closest('[data-pick]');
+      if (row) { var c = row.getAttribute('data-pick'); pickSet[c] = !pickSet[c]; refresh(); return; }
+      if (e.target.closest('[data-pick-all]')) {
+        var everything = chosen().length === all.length;
+        all.forEach(function (c) { pickSet[c] = !everything; });
+        refresh();
+      }
+    });
+    refresh();
   }
 
-  function startExam(btn) {
+  function startExam(btn, codes) {
     setBusy(btn, true, 'Preparing your questions...');
     var sid = state.student.sid;
+    var courses = COURSES.filter(function (c) { return codes.indexOf(c.code) >= 0; });
     Store.getSeen(sid).then(function (seen) {
-      var built = E.buildExam(COURSES, BANKS, seen, PER_COURSE);
-      Store.saveSeen(sid, built.seen); // saved straight away so a refresh never re-rolls new questions
-      state.seen = built.seen;
+      var built = E.buildExam(courses, BANKS, seen, PER_COURSE);
+      // Keep the seen lists of the courses that were not picked.
+      var allSeen = Object.assign({}, seen || {}, built.seen);
+      Store.saveSeen(sid, allSeen); // saved straight away so a refresh never re-rolls new questions
+      state.seen = allSeen;
       var now = Date.now();
+      var minutes = MIN_PER_COURSE * courses.length;
       var ex = {
-        v: 1, sid: sid, examId: randId(), startedAt: now, endsAt: now + EXAM_MIN * 60000,
+        v: 2, sid: sid, examId: randId(), startedAt: now, endsAt: now + minutes * 60000, minutes: minutes,
         sections: built.sections, answers: {}, cur: { c: 0, i: 0 }, warned: {}
       };
       state.exam = ex;
@@ -928,7 +1038,7 @@
     }).join('');
     openModal({
       title: totalUn ? 'Submit with ' + totalUn + ' unanswered?' : 'Submit your exam?',
-      body: '<p>You have answered <b>' + (TOTAL_Q - totalUn) + ' of ' + TOTAL_Q + '</b> questions. Time left: <b>' + clock(ex.endsAt - Date.now()) + '</b>.</p>' +
+      body: '<p>You have answered <b>' + (examSize(ex) - totalUn) + ' of ' + examSize(ex) + '</b> questions. Time left: <b>' + clock(ex.endsAt - Date.now()) + '</b>.</p>' +
         '<ul class="mt-3 divide-y divide-slate-100 rounded-xl ring-1 ring-slate-200 px-4">' + rows + '</ul>' +
         '<p class="mt-3">You cannot change your answers after submitting.</p>',
       actions: [{ label: 'Go back' }, { label: 'Yes, submit', primary: true, onClick: function () { closeModal(); submitExam(false); } }]
@@ -974,8 +1084,8 @@
     var payload = { examId: ex.examId, score: mark.score, total: mark.total, pct: mark.pct, perCourse: mark.perCourse, timeUsedSec: timeUsedSec };
     var result = Object.assign({}, payload, {
       sections: ex.sections, answers: ex.answers, submittedAt: Date.now(), auto: !!auto,
-      message: messageFor(mark.pct), synced: false, improved: false, rank: null, totalStudents: null,
-      attemptsBefore: state.student.attempts
+      message: messageFor(mark.pct), synced: false, improved: [], rank: null, totalStudents: null, rankBoard: null,
+      attemptsBefore: state.student.attempts, coursesBefore: Object.keys(state.student.courseBest || {})
     });
     LS.set(k('result'), result);
     LS.del(k('exam'));
@@ -983,12 +1093,18 @@
     setView('submitting');
     renderLoading('Submitting your answers...');
 
-    return Store.submitAttempt(state.student.sid, payload).then(function (r) {
+    var migrated = Store.migrate ? Store.migrate(state.student).then(function (st) { if (st) setStudent(st); }, function () {}) : Promise.resolve();
+    return migrated.then(function () { return Store.submitAttempt(state.student.sid, payload); }).then(function (r) {
       setStudent(r.student);
       result.synced = true;
-      result.improved = r.improved;
-      result.previousBest = r.previousBest;
-      return Store.getRank(r.student).then(function (ri) {
+      result.improved = r.improved || [];
+      result.overallBefore = r.overallBefore;
+      result.overallAfter = r.overallAfter;
+      // Show the Overall position if the student is on it, otherwise the position in a single-course exam.
+      var board = r.student.overallPct != null ? 'overall' : (ex.sections.length === 1 ? ex.sections[0].code : null);
+      if (!board) return;
+      result.rankBoard = board;
+      return Store.getRank(r.student, board).then(function (ri) {
         result.rank = ri.rank; result.totalStudents = ri.total;
       }, function () { /* rank is optional */ });
     }, function (e) {
@@ -1021,12 +1137,24 @@
     setView('result');
     document.title = 'Your result';
     var st = state.student;
-    var firstAttempt = res.attemptsBefore === 0;
     var badges = '';
-    if (res.synced && res.improved) {
-      badges += '<span class="badge badge-best">' + ICON.trophy + (firstAttempt ? 'You are on the leaderboard!' : 'New personal best!') + '</span>';
+    var improved = Array.isArray(res.improved) ? res.improved : [];
+    if (res.synced) {
+      var before = res.coursesBefore || [];
+      var newBests = improved.filter(function (c) { return before.indexOf(c) >= 0; });
+      var firsts = improved.filter(function (c) { return before.indexOf(c) < 0; });
+      if (newBests.length) badges += '<span class="badge badge-best">' + ICON.trophy + 'New personal best in ' + esc(newBests.join(', ')) + '!</span>';
+      if (firsts.length) badges += '<span class="badge badge-best">' + ICON.trophy + 'You are on the ' + esc(firsts.join(', ')) + ' leaderboard' + (firsts.length > 1 ? 's' : '') + '!</span>';
+      if (res.overallAfter != null && res.overallBefore == null) badges += '<span class="badge badge-best">' + ICON.trophy + 'You joined the Overall leaderboard!</span>';
+      else if (res.overallAfter != null && res.overallAfter > res.overallBefore) badges += '<span class="badge badge-best">Overall average up to ' + pct(res.overallAfter) + '</span>';
+      if (res.rank) {
+        badges += '<span class="badge badge-rank">You\'re currently #' + res.rank + ' on the ' + (res.rankBoard === 'overall' ? 'Overall' : esc(res.rankBoard)) + ' leaderboard</span>';
+      }
+      if (st.overallPct == null) {
+        var left = Math.max(0, MIN_OVERALL - Object.keys(st.courseBest || {}).length);
+        if (left) badges += '<span class="badge badge-rank">Take ' + left + ' more course' + (left === 1 ? '' : 's') + ' to join the Overall leaderboard</span>';
+      }
     }
-    if (res.synced && res.rank) badges += '<span class="badge badge-rank">You\'re currently #' + res.rank + ' on the leaderboard</span>';
 
     $app.innerHTML =
       '<header class="bg-white/90 backdrop-blur sticky top-0 z-30 border-b border-blue-100"><div class="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">' +
@@ -1044,7 +1172,8 @@
       '<div class="mt-3 flex flex-wrap justify-center gap-2">' + badges + '</div>' +
       '<div class="mt-5 grid grid-cols-2 gap-3 text-left">' +
       '<div class="rounded-2xl bg-blue-50 p-3"><div class="text-[11px] font-bold uppercase tracking-wider text-blue-700">Time used</div><div class="font-extrabold text-blue-900 text-sm mt-0.5">' + duration(res.timeUsedSec) + '</div></div>' +
-      '<div class="rounded-2xl bg-blue-50 p-3"><div class="text-[11px] font-bold uppercase tracking-wider text-blue-700">Best score</div><div class="font-extrabold text-blue-900 text-sm mt-0.5">' + pct(st.bestPct) + ' (' + st.bestScore + '/' + st.bestTotal + ')</div></div>' +
+      '<div class="rounded-2xl bg-blue-50 p-3"><div class="text-[11px] font-bold uppercase tracking-wider text-blue-700">Overall average</div><div class="font-extrabold text-blue-900 text-sm mt-0.5">' +
+        (st.overallPct != null ? pct(st.overallPct) + ' (' + Object.keys(st.courseBest || {}).length + ' courses)' : 'After ' + MIN_OVERALL + ' courses') + '</div></div>' +
       '</div></section>' +
       '<section class="rounded-3xl hero-card text-white p-5 sm:p-6 shadow-lg"><p class="text-xs font-bold uppercase tracking-wider text-blue-100">Message for you</p>' +
       '<p class="mt-2 text-lg font-bold leading-snug">' + esc(res.message) + '</p></section>' +
@@ -1063,7 +1192,7 @@
       '<button type="button" class="btn btn-primary flex-1 text-base" data-action="corrections">View corrections</button>' +
       '<button type="button" class="btn btn-ghost flex-1 text-base" data-action="dashboard">Back to dashboard</button></div>' +
       '</main>' + footer();
-    if (res.synced && res.rank && res.rank <= 3) setTimeout(function () { maybeMedal(res.rank); }, 1400);
+    if (res.synced && res.rankBoard === 'overall' && res.rank && res.rank <= 3) setTimeout(function () { maybeMedal(res.rank); }, 1400);
     requestAnimationFrame(function () {
       var fg = document.querySelector('.ring-fg');
       if (fg) setTimeout(function () { fg.style.strokeDashoffset = fg.getAttribute('data-off'); }, 60);
@@ -1218,6 +1347,7 @@
     'goto-q': function (el) { go(state.exam.cur.c, +el.getAttribute('data-i')); },
     'answer': function (el) { answer(+el.getAttribute('data-d')); },
     'clear-answer': clearAnswer,
+    'board-tab': function (el) { switchBoard(el.getAttribute('data-board')); },
     'calculator': function () { if (window.CBTCalc) window.CBTCalc.open(); },
     'next': next,
     'prev': prev,
