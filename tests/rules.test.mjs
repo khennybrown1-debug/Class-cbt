@@ -137,6 +137,95 @@ await t('a second PIN cannot be added after sign up', () =>
   assertFails(setDoc(doc(db, 'students', 'UG_24_0100', 'pin', 'attackerhash'), { createdAt: serverTimestamp() })));
 await t('the PIN cannot be deleted', () => assertFails(deleteDoc(doc(db, 'students', 'UG_24_0100', 'pin', 'abc123hash'))));
 
+console.log('\nCourse leaderboards and the overall average');
+// UG_24_0001 is an "old" account: 3 attempts, attempt records with perCourse.GNS, no coursesTaken yet.
+const boardDoc = (o = {}) => Object.assign({
+  name: 'Amina Bello', matric: 'UG/24/0001', bestPct: 83.3, bestScore: 150, bestTotal: 180,
+  bestAt: serverTimestamp(), attempts: 3, src: 'UG_24_0001_3', updatedAt: serverTimestamp()
+}, o);
+const migrateStudent = (o = {}) => Object.assign({ courseBest: { GNS: 83.3 }, coursesTaken: 1, updatedAt: serverTimestamp() }, o);
+await t('a course record that does not match its exam record is rejected', () =>
+  assertFails(setDoc(doc(db, 'board_GNS', 'UG_24_0001'), boardDoc({ bestPct: 99, bestScore: 178 }))));
+await t('a course record pointing at someone else\'s exam is rejected', () =>
+  assertFails(setDoc(doc(db, 'board_GNS', 'UG_24_0100'), boardDoc({ name: 'Amina Bello', matric: 'UG/24/0100' }))));
+await t('a course record for a course that was not in the exam is rejected', () =>
+  assertFails(setDoc(doc(db, 'board_PHY', 'UG_24_0001'), boardDoc())));
+await t('a course record with the wrong name is rejected', () =>
+  assertFails(setDoc(doc(db, 'board_GNS', 'UG_24_0001'), boardDoc({ name: 'Someone Else' }))));
+await t('one-time upgrade of an old account (course record + course bests) is allowed', async () => {
+  const b = writeBatch(db);
+  b.set(doc(db, 'board_GNS', 'UG_24_0001'), boardDoc());
+  b.update(doc(db, 'students', 'UG_24_0001'), migrateStudent());
+  await assertSucceeds(b.commit());
+});
+await t('the upgrade cannot be run a second time', () =>
+  assertFails(updateDoc(doc(db, 'students', 'UG_24_0001'), migrateStudent({ courseBest: { GNS: 100 } }))));
+await t('a new student can only start with empty course bests', async () => {
+  await assertFails(setDoc(doc(db, 'students', 'UG_24_0200'), newStudent({ matric: 'UG/24/0200', courseBest: { GNS: 90 }, coursesTaken: 1 })));
+  await assertSucceeds(setDoc(doc(db, 'students', 'UG_24_0200'), newStudent({ matric: 'UG/24/0200', courseBest: {}, coursesTaken: 0 })));
+});
+
+// A new-style submission: student + attempt + course records in one batch (same shape as store.js).
+async function submitWithBoards(sid, name, matric, perCourse, examId, opts = {}) {
+  const s = (await getDoc(doc(db, 'students', sid))).data();
+  const n = s.attempts + 1, id = `${sid}_${n}`;
+  let score = 0, total = 0;
+  Object.values(perCourse).forEach((c) => { score += c.score; total += c.total; });
+  const pct = Math.round(score / total * 1000) / 10;
+  const courseBest = Object.assign({}, s.courseBest || {});
+  const b = writeBatch(db);
+  for (const [code, c] of Object.entries(perCourse)) {
+    const cur = (await getDoc(doc(db, 'board_' + code, sid))).data();
+    const p = Math.round(c.score / c.total * 1000) / 10;
+    let rec;
+    if (!cur || p > cur.bestPct) rec = { bestPct: p, bestScore: c.score, bestTotal: c.total, bestAt: serverTimestamp(), attempts: (cur ? cur.attempts : 0) + 1 };
+    else rec = { bestPct: cur.bestPct, bestScore: cur.bestScore, bestTotal: cur.bestTotal, bestAt: cur.bestAt, attempts: cur.attempts + 1 };
+    Object.assign(rec, { name, matric, src: id, updatedAt: serverTimestamp() }, (opts.board || {})[code] || {});
+    b.set(doc(db, 'board_' + code, sid), rec);
+    courseBest[code] = rec.bestPct;
+  }
+  const keys = Object.keys(courseBest);
+  const upd = { attempts: n, lastPct: pct, lastExamId: examId, updatedAt: serverTimestamp(), courseBest, coursesTaken: keys.length };
+  if (keys.length >= 4) { upd.overallPct = Math.round(keys.reduce((a, k) => a + courseBest[k], 0) / keys.length * 10) / 10; upd.overallAt = serverTimestamp(); }
+  if (pct > s.bestPct) Object.assign(upd, { bestPct: pct, bestScore: score, bestTotal: total, bestAt: serverTimestamp() });
+  Object.assign(upd, opts.student || {});
+  b.update(doc(db, 'students', sid), upd);
+  b.set(doc(db, 'attempts', id), { sid, name, matric, score, total, pct, perCourse, timeUsedSec: 300, examId, createdAt: serverTimestamp() });
+  return b.commit();
+}
+const S2 = ['UG_24_0200', 'Amina Bello', 'UG/24/0200'];
+await t('Physics-only exam: creates the PHY course record', () =>
+  assertSucceeds(submitWithBoards(...S2, { PHY: { score: 30, total: 45, wrong: 10, skipped: 5 } }, 'p1')));
+await t('lower Physics score: attempts go up, best stays', () =>
+  assertSucceeds(submitWithBoards(...S2, { PHY: { score: 20, total: 45, wrong: 20, skipped: 5 } }, 'p2')));
+await t('course best cannot be lowered', () =>
+  assertFails(submitWithBoards(...S2, { PHY: { score: 10, total: 45, wrong: 30, skipped: 5 } }, 'p3', { board: { PHY: { bestPct: 22.2, bestScore: 10 } } })));
+await t('course best cannot be raised above the real score', () =>
+  assertFails(submitWithBoards(...S2, { PHY: { score: 10, total: 45, wrong: 30, skipped: 5 } }, 'p3', { board: { PHY: { bestPct: 100, bestScore: 45, bestAt: serverTimestamp() } } })));
+await t('course attempts cannot jump by 2', () =>
+  assertFails(submitWithBoards(...S2, { PHY: { score: 10, total: 45, wrong: 30, skipped: 5 } }, 'p3', { board: { PHY: { attempts: 9 } } })));
+await t('overall average cannot be above 100%', () =>
+  assertFails(submitWithBoards(...S2, { GNS: { score: 40, total: 45, wrong: 5, skipped: 0 } }, 'p3', { student: { overallPct: 150, overallAt: serverTimestamp() } })));
+await t('4-course exam: joins the Overall leaderboard with the average', async () => {
+  await assertSucceeds(submitWithBoards(...S2, {
+    GNS: { score: 40, total: 45, wrong: 5, skipped: 0 }, PHC: { score: 30, total: 45, wrong: 15, skipped: 0 },
+    CHM: { score: 27, total: 45, wrong: 18, skipped: 0 }
+  }, 'p3'));
+  const s = (await getDoc(doc(db, 'students', 'UG_24_0200'))).data();
+  if (s.coursesTaken !== 4 || typeof s.overallPct !== 'number') throw new Error(JSON.stringify(s));
+});
+await t('anyone can read the course and overall leaderboards and count them', async () => {
+  await assertSucceeds(getDocs(query(collection(db, 'board_PHY'), orderBy('bestPct', 'desc'), limit(100))));
+  await assertSucceeds(getDocs(query(collection(db, 'students'), orderBy('overallPct', 'desc'), limit(100))));
+  await assertSucceeds(getCountFromServer(query(collection(db, 'board_PHY'), where('bestPct', '>', 50))));
+  await assertSucceeds(getCountFromServer(query(collection(db, 'students'), where('overallPct', '>=', 0))));
+});
+await t('course records cannot be deleted', () => assertFails(deleteDoc(doc(db, 'board_PHY', 'UG_24_0200'))));
+await t('old-style submissions (cached old page) still work', async () => {
+  cur = await read('UG_24_0001');
+  await assertSucceeds(submit('UG_24_0001', cur, { score: 100, total: 180, pct: 55.6, examId: 'old-page' }));
+});
+
 console.log('\nOther collections are closed');
 await t('random collections cannot be written', () => assertFails(setDoc(doc(db, 'hack', 'x'), { a: 1 })));
 

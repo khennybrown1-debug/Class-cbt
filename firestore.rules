@@ -14,6 +14,8 @@ rules_version = '2';
 //   - Best score can never go down and can never be above 100%.
 //   - Nobody can delete anything.
 //   - The "seen questions" record can be written by the student's app.
+//   - Course leaderboards (board_GNS, board_PHY, ...) only accept scores that
+//     match a real submitted exam, and a course best can never go down.
 // =====================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -27,6 +29,12 @@ service cloud.firestore {
     function isCount(x) {
       return x is int && x >= 0 && x <= 1000;
     }
+    // New fields added for course leaderboards (all optional on a student record).
+    function validExtras(d) {
+      return (!('courseBest' in d) || d.courseBest is map)
+          && (!('coursesTaken' in d) || isCount(d.coursesTaken))
+          && (!('overallPct' in d) || isPct(d.overallPct));
+    }
 
     // ---------------- Students (this is the leaderboard) ----------------
     match /students/{sid} {
@@ -35,7 +43,9 @@ service cloud.firestore {
       // Sign up: only a fresh record with every score at zero.
       allow create: if request.resource.data.keys().hasOnly(
                          ['name', 'matric', 'hasPin', 'attempts', 'bestPct', 'bestScore', 'bestTotal',
-                          'bestAt', 'lastPct', 'lastExamId', 'createdAt', 'updatedAt'])
+                          'bestAt', 'lastPct', 'lastExamId', 'createdAt', 'updatedAt', 'courseBest', 'coursesTaken'])
+                    && (!('courseBest' in request.resource.data) || request.resource.data.courseBest == {})
+                    && (!('coursesTaken' in request.resource.data) || request.resource.data.coursesTaken == 0)
                     && request.resource.data.keys().hasAll(
                          ['name', 'matric', 'hasPin', 'attempts', 'bestPct', 'bestScore', 'bestTotal',
                           'bestAt', 'lastPct', 'lastExamId', 'createdAt', 'updatedAt'])
@@ -58,7 +68,11 @@ service cloud.firestore {
 
       // Submitting an exam. name, matric, hasPin and createdAt can never change.
       allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(
-                         ['attempts', 'bestPct', 'bestScore', 'bestTotal', 'bestAt', 'lastPct', 'lastExamId', 'updatedAt'])
+                         ['attempts', 'bestPct', 'bestScore', 'bestTotal', 'bestAt', 'lastPct', 'lastExamId', 'updatedAt',
+                          'courseBest', 'coursesTaken', 'overallPct', 'overallAt'])
+                    && validExtras(request.resource.data)
+                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['overallAt'])
+                        || request.resource.data.overallAt == request.time)
                     && request.resource.data.attempts == resource.data.attempts + 1
                     && isPct(request.resource.data.lastPct)
                     && isPct(request.resource.data.bestPct)
@@ -85,6 +99,17 @@ service cloud.firestore {
                        )
                     // The matching attempt record must be written in the same batch.
                     && existsAfter(/databases/$(database)/documents/attempts/$(sid + '_' + string(request.resource.data.attempts)));
+
+      // One-time upgrade of an older account: fills in course bests and the
+      // overall average from the student's existing exam records.
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+                         ['courseBest', 'coursesTaken', 'overallPct', 'overallAt', 'updatedAt'])
+                    && !('coursesTaken' in resource.data)
+                    && resource.data.attempts > 0
+                    && request.resource.data.courseBest is map
+                    && validExtras(request.resource.data)
+                    && request.resource.data.updatedAt == request.time
+                    && (!('overallAt' in request.resource.data) || request.resource.data.overallAt == request.time);
 
       allow delete: if false;
 
@@ -121,6 +146,47 @@ service cloud.firestore {
                     && request.resource.data.timeUsedSec is int
                     && request.resource.data.createdAt == request.time;
       allow update, delete: if false;
+    }
+
+    // ---------------- Course leaderboards: board_GNS, board_PHC, board_PHY, ... ----------------
+    match /{boardName}/{sid} {
+      function isBoard() { return boardName.matches('board_[A-Z]{2,5}'); }
+      function code() { return boardName.split('_')[1]; }
+      function d() { return request.resource.data; }
+      // The exam record this score comes from (written in the same batch, or already saved).
+      function entry() { return getAfter(/databases/$(database)/documents/attempts/$(d().src)).data.perCourse[code()]; }
+      function fromAttempt() {
+        return getAfter(/databases/$(database)/documents/attempts/$(d().src)).data.sid == sid
+            && entry().score is int && entry().total is int && entry().total > 0
+            && entry().score >= 0 && entry().score <= entry().total;
+      }
+      function bestFromEntry() {
+        return d().bestScore == entry().score && d().bestTotal == entry().total
+            && d().bestPct >= entry().score * 100.0 / entry().total - 0.1
+            && d().bestPct <= entry().score * 100.0 / entry().total + 0.1
+            && d().bestAt == request.time;
+      }
+      function base() {
+        return isBoard()
+            && d().keys().hasOnly(['name', 'matric', 'bestPct', 'bestScore', 'bestTotal', 'bestAt', 'attempts', 'src', 'updatedAt'])
+            && d().keys().hasAll(['name', 'matric', 'bestPct', 'bestScore', 'bestTotal', 'bestAt', 'attempts', 'src', 'updatedAt'])
+            && d().src is string && d().src.size() <= 60
+            && getAfter(studentPath(sid)).data.name == d().name
+            && getAfter(studentPath(sid)).data.matric == d().matric
+            && isPct(d().bestPct) && isCount(d().bestScore) && isCount(d().bestTotal)
+            && isCount(d().attempts) && d().attempts >= 1
+            && d().updatedAt == request.time
+            && fromAttempt();
+      }
+      allow get, list: if isBoard();
+      allow create: if base() && bestFromEntry();
+      allow update: if base()
+                    && d().attempts == resource.data.attempts + 1
+                    && d().bestPct >= resource.data.bestPct
+                    && ((d().bestPct == resource.data.bestPct && d().bestScore == resource.data.bestScore
+                          && d().bestTotal == resource.data.bestTotal && d().bestAt == resource.data.bestAt)
+                        || (d().bestPct > resource.data.bestPct && bestFromEntry()));
+      allow delete: if false;
     }
 
     // ---------------- Questions each student has already seen ----------------
