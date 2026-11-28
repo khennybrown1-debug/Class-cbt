@@ -23,6 +23,9 @@
     BANKS[c.code] = b.questions;
     b.questions.forEach(function (q) { QMAP[q.id] = q; });
   });
+  // Retired questions are never used in new exams, but an exam already in progress
+  // (or an older result) may still point to them, so keep them for display.
+  (window.RETIRED_QUESTIONS || []).forEach(function (q) { if (!QMAP[q.id]) QMAP[q.id] = q; });
   var PER_COURSE = Math.max(1, parseInt(CFG.questionsPerCourse, 10) || 45);
   // Time is given per course: picking 1 course gives 30 minutes, 4 courses give 120 minutes.
   var MIN_PER_COURSE = parseFloat(CFG.minutesPerCourse) > 0 ? parseFloat(CFG.minutesPerCourse) : 30;

@@ -23,7 +23,10 @@ const vm = require('vm');
 const MIN_QUESTIONS = 300;
 // Banks supplied by the class (copied exactly from their file). They may be smaller than 300,
 // and similar-looking pairs are only reported, because the questions must not be changed.
-const PROVIDED = { PHY: 'PHY 111 CBT QUESTIONS spreadsheet' };
+const PROVIDED = {
+  PHY: 'PHY 111 CBT QUESTIONS spreadsheet',
+  GNS: 'Communication in Speech and Writing, CBT practice rounds 1-19'
+};
 const DIR = path.join(__dirname, '..', 'js', 'questions');
 const SIM_QUESTION = 0.72;   // question text similarity that counts as a near duplicate
 const SIM_FACT = 0.6;        // question + correct answer similarity (same fact tested twice)

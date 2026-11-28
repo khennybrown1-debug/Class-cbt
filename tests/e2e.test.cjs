@@ -165,7 +165,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
   await t('dashboard shows stats, seen progress, instructions, courses, credit', async () => {
     await page.waitForSelector('#seen .bar');
     const txt = await page.textContent('body');
-    for (const s of ['Rank', 'Overall', 'Attempts', '0 of 332 seen', '0 of 303 seen', 'Exam instructions', 'Use of English', 'Primary Health Care', 'General Chemistry', 'Action and Use of Medicine', 'Designed by Faruk Dynova', 'No scores yet'])
+    for (const s of ['Rank', 'Overall', 'Attempts', '0 of 173 seen', '0 of 303 seen', 'Exam instructions', 'Use of English', 'Primary Health Care', 'General Chemistry', 'Action and Use of Medicine', 'Designed by Faruk Dynova', 'No scores yet'])
       assert(txt.includes(s), 'missing: ' + s);
     await noHorizontalScroll(page);
   });
@@ -321,7 +321,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
     await page.waitForSelector('#lb .podium');
     const lb = await page.textContent('#lb');
     assert(lb.includes('Amina Bello') && lb.includes('4 courses'), lb);
-    await page.waitForFunction(() => document.getElementById('seen').textContent.includes('45 of 332'));
+    await page.waitForFunction(() => document.getElementById('seen').textContent.includes('45 of 173'));
     const stats = await page.textContent('#stats');
     assert(stats.includes('#1') && stats.includes('Overall') && stats.includes('average of 4 courses'), stats);
   });
@@ -504,7 +504,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
       const txt = await p.textContent('body');
       assert(!txt.includes('Resume exam'), 'exam still there');
       assert((await p.textContent('#stats')).includes('0'), 'attempts');
-      await p.waitForFunction(() => document.getElementById('seen').textContent.includes('0 of 332'));
+      await p.waitForFunction(() => document.getElementById('seen').textContent.includes('0 of 173'));
       assert((await p.textContent('#lb')).includes('No scores yet'), 'quit exam should not be on the leaderboard');
     });
     await t('log out asks "Stay logged in" or "Yes, log out"', async () => {
@@ -760,7 +760,7 @@ const timerSeconds = (txt) => txt.split(':').map(Number).reduce((a, b) => a * 60
       await D.page.waitForSelector('#auth-submit');
       await login(D.page, 'MED/24/101', '1234');
       await D.page.waitForSelector('[data-action=start-exam]');
-      await D.page.waitForFunction(() => document.getElementById('seen').textContent.includes('45 of 332'), null, { timeout: 10000 });
+      await D.page.waitForFunction(() => document.getElementById('seen').textContent.includes('45 of 173'), null, { timeout: 10000 });
       await startExam(D.page);
       const ids = await S(D.page, () => window.CBTApp.state.exam.sections.flatMap((s) => s.items.map((i) => i.id)));
       const overlap = ids.filter((id) => aFirstExamIds.includes(id));

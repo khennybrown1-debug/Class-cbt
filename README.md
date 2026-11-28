@@ -3,7 +3,7 @@
 A JAMB style CBT practice website for a 100 level class. Everyone opens the same link on their phone, writes practice tests and sees **one shared live leaderboard**.
 
 - 5 courses: Use of English (GNS), Primary Health Care (PHC), General Chemistry (CHM), Action and Use of Medicine (AUM) and Physics (PHY)
-- 1,358 questions (GNS 332, PHC 303, CHM 311, AUM 314, PHY 98), each with an explanation. Physics comes word for word from the class PHY 111 question file.
+- 1,199 questions (GNS 173, PHC 303, CHM 311, AUM 314, PHY 98), each with an explanation. GNS comes word for word from the class "Communication in Speech and Writing" practice list (rounds 1 to 19) and Physics from the PHY 111 question file.
 - Students choose the courses for each exam: one, several or all. 45 questions and 30 minutes per course.
 - Leaderboards: one per course, plus an Overall leaderboard (average of best course scores, after 4 courses)
 - A student never sees the same question again until they have gone through the whole bank for that course

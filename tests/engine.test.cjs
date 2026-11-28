@@ -104,9 +104,13 @@ t('questions are spread evenly across topics in every exam', () => {
     const counts = {};
     s.items.forEach(i => { const tp = QMAP[i.id].topic; counts[tp] = (counts[tp] || 0) + 1; });
     const topics = new Set(BANKS[s.code].map(q => q.topic));
-    const vals = Object.values(counts);
     assert.strictEqual(Object.keys(counts).length, Math.min(topics.size, PER), s.code + ' should cover every topic');
-    assert.ok(Math.max(...vals) - Math.min(...vals) <= 1, s.code + ' topic spread ' + JSON.stringify(counts));
+    // Even spread: a topic may only have 2+ more questions than another if that other topic has run out.
+    const size = {};
+    BANKS[s.code].forEach(q => { size[q.topic] = (size[q.topic] || 0) + 1; });
+    for (const a of Object.keys(counts)) for (const b of Object.keys(counts)) {
+      if (counts[a] > counts[b] + 1) assert.strictEqual(counts[b], size[b], s.code + ' topic spread ' + JSON.stringify(counts));
+    }
   }
 });
 
